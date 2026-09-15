@@ -1,0 +1,30 @@
+AI Fund Manager diagnostic report (EXAMPLE ONLY)
+This file contains no live credentials, account identifiers, API keys, or tokens.
+
+Python: PASS - compatible Python interpreter is running
+Dependencies: PASS - required packages are available
+Configuration: PASS - local .env is present (values are redacted)
+IBKR API: PASS - official TWS API capabilities detected
+TWS: PASS - Trader Workstation process is running
+Socket: PASS - safe Paper socket is reachable
+Paper Account: PASS - DU****** (redacted)
+Market Data: WARN - delayed data supplied by IBKR (example)
+LLM API: PASS - API key is configured (key is never shown)
+Database: PASS - SQLite database is available
+Risk Engine: PASS - Risk Engine is ready
+Execution Mode: PASS - OBSERVE
+Broker Source: PASS - IBKR_PAPER
+Broker Mutation: DISABLED
+Scheduler: PASS - trading scheduler is available
+SAFE_MODE: OFF
+
+Windows checks
+Venv: PASS
+TWS process: PASS
+Config file: PASS
+OpenAI API Key: CONFIGURED (value omitted)
+Backend lock: NOT PRESENT
+Database: PRESENT
+Live ports checked: NONE (7496, 7946, 4001 are never probed)
+Broker Mutation: DISABLED
+Sensitive values are intentionally omitted from this report.

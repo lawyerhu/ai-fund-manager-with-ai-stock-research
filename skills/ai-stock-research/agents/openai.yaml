@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI选股研究 · Luna → Astra"
+  short_description: "复用现有股票池，由Luna筛选、GPT-6 Astra深研并比较本轮第一名与跨轮有效首选，生成中文报告不下单"
+  default_prompt: "使用 $ai-stock-research 复用最新候选，由GPT-6 Astra中等推理完成Top 5深研，将本轮第一名与继承的 active_selection 比较，按最终 KEEP / SWITCH 保存有效首选状态并生成正式中文 DOCX 报告，不读取持仓、不下单。"

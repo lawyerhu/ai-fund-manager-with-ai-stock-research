@@ -1,0 +1,13 @@
+[server]
+headless = true
+showEmailPrompt = false
+address = "127.0.0.1"
+port = 8501
+enableWebsocketCompression = false
+websocketPingInterval = 20
+
+[browser]
+gatherUsageStats = false
+
+[global]
+showWarningOnDirectExecution = false

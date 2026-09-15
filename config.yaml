@@ -1,0 +1,140 @@
+portfolio:
+  starting_equity: 1000.0
+  benchmark_symbols: [SPY, QQQ]
+  max_positions: 1
+  database_path: data/ai_fund_manager.sqlite3
+
+risk:
+  hard_drawdown_limit: 0.25
+  target_annualized_vol: 0.25
+  absolute_max_weight: 1.00
+  min_confidence_to_open: 0.55
+  max_data_age_minutes: 30
+  max_decision_age_minutes_for_execution: 60
+  comparison_tolerance: 0.000000001
+  min_avg_dollar_volume: 500000
+  max_annualized_volatility: 1.00
+  max_gap_pct: 0.08
+  halt_recovery_drawdown: 0.20
+  event_risk:
+    earnings_blackout_days: 3
+    earnings_max_weight: 0.50
+    macro_event_max_weight: 0.70
+    macro_unknown_policy: cap
+    macro_unknown_max_weight: 0.70
+    reject_new_before_earnings: false
+  drawdown_tiers:
+    - {drawdown: 0.10, max_weight: 0.70}
+    - {drawdown: 0.15, max_weight: 0.50}
+    - {drawdown: 0.20, max_weight: 0.25}
+    - {drawdown: 0.25, max_weight: 0.00}
+
+agent:
+  max_tool_rounds: 12
+  max_candidates: 25
+  decision_horizon_days: 20
+
+llm:
+  provider: ccswitch
+  base_url: ""
+  api_key: ""
+  luna_model: gpt-5.6-luna
+  sol_model: gpt-5.6-sol
+  luna_reasoning_effort: max
+  sol_reasoning_effort: medium
+  pipeline: LUNA_SOL
+  screen_batch_size: 60
+  screen_batch_top_k: 6
+  min_batch_size: 15
+  final_top_k: 20
+  final_max_candidates: 24
+  deep_research_enabled: true
+  deep_research_top_five: 5
+  deep_research_top_three: 3
+  force_stock_selection: true
+  forced_selection_high_weight: 1.00
+  forced_selection_data_limited_weight: 0.70
+  forced_selection_exploratory_weight: 0.35
+  api_protocol: RESPONSES
+  protocol_fallback: false
+  timeout_seconds: 300
+  fallback_to_sol_only: false
+
+data:
+  provider: yahoo
+  universe_source: wikipedia
+
+execution:
+  entry_engine_enabled: true
+  regular_hours_only: true
+  entry_delay_after_open_seconds: 120
+  entry_max_quote_age_seconds: 10
+  limit_slippage_bps: 5
+  max_total_slippage_bps: 30
+  entry_order_timeout_seconds: 45
+  max_entry_requotes: 2
+  entry_revalidation:
+    max_price_gap_pct_without_review: 0.03
+    max_spread_bps: 30
+    review_on_major_news: true
+    review_on_sec_filing: true
+    review_on_guidance_change: true
+    review_on_market_regime_change: true
+    review_on_sector_regime_change: true
+  mode: OBSERVE
+  broker_source: IBKR_PAPER
+  execution_mode: OBSERVE
+  enforce_market_hours: true
+  fractional_shares: false
+  minimum_order_notional: 1.00
+  minimum_rebalance_notional: 1000.00
+  buy_cash_safety_factor: 0.98
+  # LOCAL_PAPER simulation assumptions; IBKR_PAPER persists broker-reported costs.
+  commission_per_order: 0.00
+  commission_per_share: 0.005
+  minimum_commission: 1.00
+  slippage_bps: 5.0
+  order_timeout_seconds: 30
+  quote_timeout_seconds: 10
+  allow_delayed_quotes: false
+  max_quote_age_seconds: 30
+
+strategy:
+  full_research_frequency: WEEKLY
+  max_strategic_switches_per_week: 1
+  switch_hysteresis:
+    min_expected_excess_improvement: 0.01
+    min_confidence_improvement: 0.05
+    switching_cost_bps: 10
+
+portfolio_review:
+  replacement_threshold: 10
+  normal_review_interval_hours: 24
+
+monitoring:
+  position_check_minutes: 30
+  review_drawdown_pct: 0.10
+  hard_stop_loss_pct: 0.15
+  take_profit_pct: null
+  take_profit_reduce_fraction: 0.50
+  sol_daily_review_enabled: true
+  emergency_review_enabled: true
+  review_cooldown_minutes: 60
+
+scheduler:
+  enabled: true
+  weekly_day: monday
+  weekly_time: "09:45"
+  full_research_day: monday
+  full_research_time: "10:00"
+  pre_execution_time: "09:00"
+  daily_review_time: "16:05"
+  daily_time: "16:05"
+  timezone: America/New_York
+  risk_monitor_interval_minutes: 15
+  entry_check_interval_seconds: 30
+  poll_seconds: 30
+
+dashboard:
+  database_path: data/ai_fund_manager.sqlite3
+  refresh_seconds: 3

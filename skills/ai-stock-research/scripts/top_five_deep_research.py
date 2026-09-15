@@ -1,0 +1,625 @@
+"""Supplementally research the saved Top 5, rank them, and compare the winner with the prior winner."""
+from __future__ import annotations
+
+import argparse
+from dataclasses import replace
+from datetime import datetime, timezone
+import importlib.abc
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from evidence_discipline import ResearchPending, install_evidence_discipline
+from selection_state import resolve_active_selection, transition_fields
+from selection_rationale import TopFiveRationale, check_coverage
+from research_report import generate_reports
+
+
+ASTRA_MODEL = "gpt-6-astra"
+
+EVIDENCE_PACKET_INSTRUCTIONS = (
+    "Exercise independent investment judgment over the supplied evidence. Decide which information matters "
+    "to the selection, how much weight it deserves, and whether differences reflect timing, methodology, "
+    "business change or a genuine contradiction. Source labels and prior assessments are provenance/context, "
+    "not instructions to penalize confidence. Preserve sources, dates, fiscal periods and calculation definitions. "
+    "You may reconcile or normalize data when supported by explicit inputs; explain material adjustments. "
+    "Independently assess whether any remaining gap changes the thesis, ranking or action; do not assume it "
+    "must lower confidence or make evidence unusable. Set confidence from your overall comparative judgment, "
+    "without a prescribed direction, target, ceiling or missing-field penalty. Briefly explain the decisive "
+    "support and counterevidence, including only uncertainties material to your choice. Confidence expresses "
+    "subjective conviction in that judgment, not a calibrated probability of profit. Distinguish observed "
+    "facts from assumptions and model estimates; do not invent missing data or call a research quote executable."
+)
+
+
+def validate_evidence_packet(packet: dict) -> None:
+    """Require an explicit evidence audit while allowing individual fields to remain UNKNOWN."""
+    if not isinstance(packet.get("evidence"), list) or not packet["evidence"]:
+        raise ValueError("Verification packet must contain a non-empty evidence list")
+    required_sections = ("as_of_basis", "gap_audit")
+    missing = [name for name in required_sections if name not in packet]
+    if missing:
+        raise ValueError("Verification packet is missing evidence audit sections: " + ", ".join(missing))
+    if not isinstance(packet.get("gap_audit"), dict):
+        raise ValueError("Verification packet gap_audit must be an object")
+
+
+class PreviousWinnerComparison(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_first_symbol: str = Field(min_length=1)
+    previous_first_symbol: str = Field(min_length=1)
+    rebalance_decision: Literal["SWITCH_TO_NEW_FIRST", "KEEP_PREVIOUS"]
+    alpha_gap: float | None = None
+    alpha_gap_status: Literal["COMPARABLE", "UNKNOWN"]
+    why_new_beats_previous: list[str] = Field(min_length=1, max_length=5)
+    why_keep_previous: list[str] = Field(min_length=1, max_length=5)
+    evidence_refs: list[str] = Field(min_length=1, max_length=8)
+    confidence: float = Field(ge=0, le=1)
+    confidence_reducers: list[str] = Field(default_factory=list, max_length=8)
+    thesis_invalidation_conditions: list[str] = Field(min_length=1, max_length=5)
+
+
+class NoTradingImports(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        blocked = {
+            "src.main", "src.runner", "src.service", "src.scheduler", "src.risk_engine",
+            "src.execution",
+        }
+        if fullname in blocked or fullname.startswith("src.execution."):
+            raise ImportError(f"Research-only skill blocks {fullname}")
+        return None
+
+
+def load_json(path: Path) -> dict:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected JSON object: {path}")
+    return value
+
+
+def extract_initial_result(raw: dict) -> tuple[dict, dict[str, dict], list[dict]]:
+    """Accept the current equal-depth result shape and the older nested shape."""
+    ranking = raw.get("ranking")
+    deep = raw.get("deep_research")
+    if isinstance(ranking, dict) and isinstance(ranking.get("ranking"), list):
+        initial_ranking = ranking
+    else:
+        nested = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+        nested_deep = nested.get("deep_research") if isinstance(nested.get("deep_research"), dict) else {}
+        initial_ranking = nested_deep.get("ranking") if isinstance(nested_deep.get("ranking"), dict) else {}
+        deep = nested_deep.get("deep_research") or nested.get("deep_research")
+    if not isinstance(initial_ranking, dict) or not isinstance(initial_ranking.get("ranking"), list):
+        raise ValueError("Source result has no unified ranking")
+    rows = initial_ranking["ranking"]
+    if len(rows) < 5:
+        raise ValueError("Source result has fewer than five ranked candidates")
+    top5 = rows[:5]
+    symbols = [str(row.get("symbol", "")).upper() for row in top5]
+    if any(not symbol for symbol in symbols) or len(set(symbols)) != 5:
+        raise ValueError("Unified Top 5 is invalid or contains duplicates")
+    if not isinstance(deep, dict):
+        deep = {}
+    deep_by_symbol = {str(key).upper(): value for key, value in deep.items() if isinstance(value, dict)}
+    return initial_ranking, deep_by_symbol, top5
+
+
+def extract_previous_winner(raw: dict) -> tuple[str, dict]:
+    """Resolve the retained AI selection; the function name is kept for existing callers."""
+    symbol = resolve_active_selection(raw)
+    nested = raw.get("result") if isinstance(raw.get("result"), dict) else {}
+    containers = [raw, nested]
+    winner_record = None
+
+    if winner_record is None:
+        for container in containers:
+            for key in ("final_ranking", "ranking"):
+                ranking = container.get(key)
+                rows = ranking.get("ranking") if isinstance(ranking, dict) else None
+                if isinstance(rows, list):
+                    winner_record = next(
+                        (row for row in rows if isinstance(row, dict) and str(row.get("symbol", "")).upper() == symbol),
+                        None,
+                    )
+                    if winner_record:
+                        break
+            if winner_record:
+                break
+
+    research_record = None
+    for container in containers:
+        for key in ("active_selection_research", "previous_first_supplemental_research"):
+            record = container.get(key)
+            if isinstance(record, dict) and str(record.get("symbol", "")).upper() == symbol:
+                research_record = record
+                break
+        if research_record:
+            break
+        for key in ("supplemental_research", "deep_research"):
+            value = container.get(key)
+            if isinstance(value, dict):
+                candidate = value.get(symbol) or value.get(symbol.upper())
+                if isinstance(candidate, dict):
+                    research_record = candidate
+                    break
+        if research_record:
+            break
+
+    return symbol, {
+        "winner_record": winner_record or {"symbol": symbol},
+        "research_record": research_record or {},
+        "source_status": raw.get("status"),
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", type=Path, required=True)
+    parser.add_argument("--source-result", type=Path, required=True)
+    parser.add_argument("--verification-packet", type=Path, required=True)
+    parser.add_argument("--previous-result", type=Path, required=True,
+                        help="Completed prior result carrying the retained active selection after KEEP/SWITCH")
+    parser.add_argument("--run", action="store_true", help="Actually send Astra requests; never orders")
+    args = parser.parse_args(argv)
+    if not args.run:
+        parser.error("Top-five deep research requires --run")
+
+    project = args.project.resolve()
+    source_path = args.source_result.resolve()
+    packet_path = args.verification_packet.resolve()
+    previous_path = args.previous_result.resolve()
+    if not (project / "src/llm_agent.py").is_file():
+        parser.error("Project does not contain src/llm_agent.py")
+    source = load_json(source_path)
+    packet = load_json(packet_path)
+    previous = load_json(previous_path)
+    validate_evidence_packet(packet)
+    initial_ranking, deep_by_symbol, top5_rows = extract_initial_result(source)
+    if source.get("status") != "COMPLETE":
+        raise ValueError("Unified candidate research is not COMPLETE")
+    initial_rationale = TopFiveRationale.model_validate(source.get("selection_rationale")).model_dump(mode="json")
+    candidate_symbols = source.get("candidate_symbols") or list(deep_by_symbol)
+    if len(set(candidate_symbols)) != len(candidate_symbols) or source.get("candidate_count", len(candidate_symbols)) != len(candidate_symbols):
+        raise ValueError("Source candidate coverage is incomplete or inconsistent")
+    check_coverage(initial_rationale, initial_ranking, candidate_symbols)
+    previous_symbol, previous_context = extract_previous_winner(previous)
+    top5 = [str(row["symbol"]).upper() for row in top5_rows]
+    missing = [symbol for symbol in top5 if symbol not in deep_by_symbol]
+    if missing:
+        raise ValueError("Source result is missing unified research for: " + ", ".join(missing))
+
+    sys.path.insert(0, str(project))
+    sys.meta_path.insert(0, NoTradingImports())
+    from src.config import load_config, load_project_env, env
+    load_project_env(project / ".env", override=True)
+    os.environ["EXECUTION_MODE"] = "OBSERVE"
+    from src.data_provider import YahooFinanceDataProvider
+    from src.llm_agent import (
+        CCSwitchProvider,
+        CrossSectionalRanking,
+        DeepDiveResearch,
+        LLMRuntimeConfig,
+        SolResearchCIOAgent,
+        _accumulate_usage,
+    )
+    from src.storage import redact_sensitive
+
+    cfg = load_config(project / "config.yaml")
+    runtime = replace(
+        LLMRuntimeConfig.from_mapping(cfg),
+        sol_model=ASTRA_MODEL,
+        sol_reasoning_effort="medium",
+        pipeline="LUNA_SOL",
+        fallback_to_sol_only=False,
+    )
+    if cfg.get("data", {}).get("provider", "mock").lower() not in {"yahoo", "yahoo_finance"}:
+        raise ValueError("Real research requires configured Yahoo provider; refusing mock data")
+
+    output = project / "outputs" / "skill-research" / (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-top5-deep-" + str(uuid4())
+    )
+    output.mkdir(parents=True, exist_ok=False)
+    print(f"OUTPUT_DIRECTORY={output}", flush=True)
+
+    def write(name, value):
+        (output / name).write_text(
+            json.dumps(redact_sensitive(value), ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+
+    def sink(event):
+        event = {"timestamp": datetime.now(timezone.utc).isoformat(), **event}
+        with (output / "events.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(redact_sensitive(event), ensure_ascii=False, default=str) + "\n")
+
+    manifest = {
+        "mode": "top_five_supplemental_deep_research_and_previous_first_comparison",
+        "research_model": runtime.sol_model,
+        "research_effort_requested": runtime.sol_reasoning_effort,
+        "source_result": str(source_path),
+        "verification_packet": str(packet_path),
+        "verification_packet_type": packet.get("packet_type"),
+        "verification_basis": packet.get("as_of_basis"),
+        "evidence_sections_required": ["evidence", "as_of_basis", "gap_audit"],
+        "previous_result": str(previous_path),
+        "previous_first_symbol": previous_symbol,
+        "incoming_active_selection": previous_symbol,
+        "candidate_count": len(candidate_symbols),
+        "candidate_symbols": candidate_symbols,
+        "universe": source.get("universe"),
+        "source_decision_id": (source.get("source") or {}).get("decision_id"),
+        "top_five_count": 5,
+        "top_five": top5,
+        "safety": "RESEARCH_ONLY; source result read-only; no broker/Risk Engine instance",
+        "placeOrder_calls": 0,
+        "cancelOrder_calls": 0,
+        "risk_approval": "NOT_RUN",
+        "final_score_field": "preliminary_alpha_score in the final Top 5 ranking call; never mixed with prior scores",
+        "account_review": "NOT_RUN; IBKR connector and plugin_review.py are not used",
+    }
+    write("manifest.json", manifest)
+
+    provider = CCSwitchProvider(runtime=runtime, event_sink=sink)
+    rows = provider.client.models.list()
+    model_ids = {
+        row.get("id") if isinstance(row, dict) else row.id
+        for row in (rows.get("data", []) if isinstance(rows, dict) else rows.data)
+    }
+    if ASTRA_MODEL not in model_ids:
+        raise ValueError(f"Required model unavailable: {ASTRA_MODEL}")
+
+    agent = SolResearchCIOAgent(
+        runtime.sol_model,
+        YahooFinanceDataProvider(),
+        provider=provider,
+        max_tool_rounds=int(cfg.get("agent", {}).get("max_tool_rounds", 12)),
+        deep_research_enabled=True,
+        event_sink=sink,
+    )
+    agent._candidate_symbols = top5
+    agent.external_verification = packet
+    install_evidence_discipline(agent, write, capture_selection_path=True)
+    external = json.dumps(packet, ensure_ascii=False, default=str)
+    totals = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0, "reasoning_tokens": 0}
+    supplemental: dict[str, dict] = {}
+    failures: dict[str, str] = {}
+    started = time.perf_counter()
+
+    for index, symbol in enumerate(top5, start=1):
+        prompt = (
+            "You are GPT-6 Astra performing supplemental verification for one candidate that survived a unified "
+            "cross-sectional screen. Reassess the supplied initial research using the independently retrieved evidence. "
+            "Choose the material questions for this company, its business model and current investment thesis. "
+            f"{EVIDENCE_PACKET_INSTRUCTIONS} "
+            "Use the applicable packet sections. If relevant, for the same-date market snapshot, "
+            "assess valuation, volatility and liquidity proxies against the other candidates using your judgment "
+            "of comparability and materiality; explain necessary adjustments. For earnings revisions, distinguish consensus "
+            "drift/revision observations from issuer guidance and from price-target actions. For cash flow, preserve "
+            "the reported period and GAAP/non-GAAP basis. For catalysts and peer data, name the source date or say "
+            "UNKNOWN. "
+            "This is a 20-trading-day research horizon. Do not invent an exact return, consensus revision, outage, "
+            "spread, quote or probability. Explicitly say what new evidence confirms, weakens or leaves unresolved. "
+            "Confidence may rise or fall; do not force it upward. Return compact structured DeepDiveResearch JSON only.\n"
+            f"SYMBOL: {symbol}\n"
+            f"INITIAL_UNIFIED_RANKING_ITEM:\n{json.dumps(next(row for row in top5_rows if str(row.get('symbol')).upper() == symbol), ensure_ascii=False, default=str)}\n"
+            f"INITIAL_DEEP_RESEARCH:\n{json.dumps(deep_by_symbol[symbol], ensure_ascii=False, default=str)}\n"
+            f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{external}\n"
+        )
+        try:
+            research = agent._structured_deep_stage(
+                DeepDiveResearch,
+                "sol_top_five_supplemental_deep_dive",
+                "SOL_TOP5_SUPPLEMENTAL",
+                prompt,
+                totals,
+                symbol=symbol,
+                metadata={"index": index, "total": len(top5), "source_result": str(source_path)},
+            )
+            if research.symbol.upper() != symbol:
+                raise ValueError(f"Astra returned {research.symbol}, expected {symbol}")
+            supplemental[symbol] = research.model_dump(mode="json")
+            sink({
+                "event_type": "SOL_TOP5_SUPPLEMENTAL_COMPLETED",
+                "component": "SOL",
+                "message": f"Supplemental deep research completed for {symbol}",
+                "symbol": symbol,
+                "metadata": {"index": index, "total": len(top5)},
+            })
+        except ResearchPending:
+            write("result.json", {**manifest, **agent.pending_research,
+                                 "supplemental_research": supplemental, "usage": totals})
+            return 2
+        except Exception as exc:
+            failures[symbol] = f"{type(exc).__name__}: {exc}"
+            sink({
+                "event_type": "SOL_TOP5_SUPPLEMENTAL_FAILED",
+                "component": "SOL",
+                "message": f"Supplemental deep research failed for {symbol}",
+                "symbol": symbol,
+                "metadata": {"index": index, "total": len(top5), "error": str(exc)},
+            })
+
+    if failures:
+        result = {
+            **manifest,
+            "status": "FAILED",
+            "completed_supplemental_research": sorted(supplemental),
+            "missing_supplemental_research": sorted(failures),
+            "errors": failures,
+            "usage": totals,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        }
+        write("result.json", result)
+        print("Top-five supplemental research FAILED; see redacted result.json", flush=True)
+        return 1
+
+    final_prompt = (
+        "Rank exactly the five supplied Top 5 candidates after their supplemental verification. This is a new "
+        "cross-sectional evaluation in one common context. Return all five symbols exactly once, ranks 1 through 5, "
+        "and a judgmental 0-100 score in preliminary_alpha_score that is comparable only within this final call. "
+        f"{EVIDENCE_PACKET_INSTRUCTIONS} Do not copy initial scores mechanically. Weigh the same-date common "
+        "evidence you judge material alongside company-specific research. Disclose material gaps. "
+        "UNKNOWN is unresolved evidence, not a reason "
+        "to invent a negative fact. Include concrete strengths and weaknesses, and explain why #1 beats #2. "
+        "This ranking is not a trade order, expected return, probability or statistical alpha. Return only schema JSON.\n"
+        f"TOP5_SYMBOLS: {json.dumps(top5, ensure_ascii=False)}\n"
+        f"INITIAL_TOP5_RANKING:\n{json.dumps(top5_rows, ensure_ascii=False, default=str)}\n"
+        f"SUPPLEMENTAL_RESEARCH:\n{json.dumps(supplemental, ensure_ascii=False, default=str)}\n"
+        f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{external}\n"
+    )
+    try:
+        final_ranking = agent._structured_deep_stage(
+            CrossSectionalRanking,
+            "sol_top_five_final_ranking",
+            "SOL_TOP5_FINAL_RANKING",
+            final_prompt,
+            totals,
+            metadata={"candidate_count": len(top5), "source_result": str(source_path)},
+        )
+        final_symbols = [item.symbol.upper() for item in final_ranking.ranking]
+        if len(set(final_symbols)) != len(final_symbols):
+            raise ValueError("Final ranking contains duplicate symbols")
+        if set(final_symbols) != set(top5) or len(final_symbols) != 5:
+            raise ValueError("Final ranking does not cover exactly the saved Top 5")
+    except ResearchPending:
+        write("result.json", {**manifest, **agent.pending_research,
+                             "supplemental_research": supplemental, "usage": totals})
+        return 2
+    except Exception as exc:
+        result = {
+            **manifest,
+            "status": "FAILED",
+            "completed_supplemental_research": top5,
+            "errors": {"FINAL_RANKING": f"{type(exc).__name__}: {exc}"},
+            "supplemental_research": supplemental,
+            "usage": totals,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        }
+        write("result.json", result)
+        print("Top-five final ranking FAILED; see redacted result.json", flush=True)
+        return 1
+
+    final_rows = [item.model_dump(mode="json") for item in final_ranking.ranking]
+    selected = final_rows[0]
+    runner_up = final_rows[1]
+
+    previous_supplemental = supplemental.get(previous_symbol)
+    previous_failure = None
+    if previous_supplemental is None:
+        previous_prompt = (
+            "You are GPT-6 Astra performing the same supplemental verification for the incoming active selection "
+            "stock. This stock is an incumbent research selection, not an account holding. Reassess the supplied "
+            "prior research using the labeled evidence layers from VERIFIED_EXTERNAL_EVIDENCE_JSON. Choose the material "
+            f"questions for this company's investment thesis. {EVIDENCE_PACKET_INSTRUCTIONS} "
+            "Use the same-date market and revision sections when available, while preserving UNKNOWN for fields not "
+            "covered for the incumbent. This is a 20-trading-day "
+            "research horizon. Do not invent an exact return, consensus revision, event, spread, quote or probability. "
+            "Return compact structured DeepDiveResearch JSON only.\n"
+            f"PREVIOUS_SYMBOL: {previous_symbol}\n"
+            f"PREVIOUS_RESULT_RECORD:\n{json.dumps(previous_context, ensure_ascii=False, default=str)}\n"
+            f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{external}\n"
+        )
+        try:
+            previous_research = agent._structured_deep_stage(
+                DeepDiveResearch,
+                "sol_previous_first_supplemental_deep_dive",
+                "SOL_PREVIOUS_FIRST_SUPPLEMENTAL",
+                previous_prompt,
+                totals,
+                symbol=previous_symbol,
+                metadata={"source_result": str(previous_path), "previous_first_symbol": previous_symbol},
+            )
+            if previous_research.symbol.upper() != previous_symbol:
+                raise ValueError(f"Astra returned {previous_research.symbol}, expected {previous_symbol}")
+            previous_supplemental = previous_research.model_dump(mode="json")
+            sink({
+                "event_type": "SOL_PREVIOUS_FIRST_SUPPLEMENTAL_COMPLETED",
+                "component": "SOL",
+                "message": f"Supplemental research completed for previous first-place stock {previous_symbol}",
+                "symbol": previous_symbol,
+            })
+        except ResearchPending:
+            write("result.json", {**manifest, **agent.pending_research,
+                                 "supplemental_research": supplemental,
+                                 "provisional_ranking": final_ranking.model_dump(mode="json"), "usage": totals})
+            return 2
+        except Exception as exc:
+            previous_failure = f"{type(exc).__name__}: {exc}"
+            sink({
+                "event_type": "SOL_PREVIOUS_FIRST_SUPPLEMENTAL_FAILED",
+                "component": "SOL",
+                "message": f"Supplemental research failed for previous first-place stock {previous_symbol}",
+                "symbol": previous_symbol,
+                "metadata": {"error": str(exc)},
+            })
+
+    if previous_failure:
+        result = {
+            **manifest,
+            "status": "FAILED",
+            "completed_supplemental_research": sorted(supplemental),
+            "missing_supplemental_research": [previous_symbol],
+            "errors": {"PREVIOUS_FIRST_SUPPLEMENTAL": previous_failure},
+            "final_ranking": final_ranking.model_dump(mode="json"),
+            "supplemental_research": supplemental,
+            "previous_winner_record": previous_context,
+            "usage": totals,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        }
+        write("result.json", result)
+        print("Previous-first comparison blocked because incumbent verification failed; see result.json", flush=True)
+        return 1
+
+    comparison_prompt = (
+        "Compare the new first-place stock with incoming_active_selection, the AI selection retained after the "
+        "previous final KEEP/SWITCH decision, in one common research "
+        "context. This is a security-selection rotation recommendation only, not an account review. Do not read or "
+        "infer holdings, cash, target weights, shares, trade costs or broker state. Return exactly the two symbols "
+        f"provided. {EVIDENCE_PACKET_INSTRUCTIONS} Choose one rebalance_decision: SWITCH_TO_NEW_FIRST only when the new first has a sufficiently "
+        "supported relative advantage; KEEP_PREVIOUS when the prior first remains better or the evidence gap is not "
+        "actionable. After documented evidence searches, make a best-available-evidence choice even when important "
+        "fields remain UNKNOWN. Do not abstain, request review, or automatically keep the incumbent because data "
+        "are missing. A research_requests entry suspends finality until Codex has performed the requested search. "
+        "Explain why the chosen action is preferable to its alternative, material assumptions, "
+        "remaining gaps and the evidence that would reverse it. This is a small-capital concentrated-alpha "
+        "experiment: seek prospective excess return, exclude cash as a selection, and do not let lower volatility "
+        "alone determine the choice. Confidence need not be high to make a decision. If symbols are "
+        "identical, return KEEP_PREVIOUS. Do not subtract scores from different runs. alpha_gap must be null with "
+        "alpha_gap_status UNKNOWN unless a same-date, same-basis comparable gap is explicitly supported. Give "
+        "concrete reasons why the new first beats the previous first and why keeping the previous first could still "
+        "be correct. Include short evidence_refs that point to the supplied research/evidence records. "
+        "Return only schema JSON; no private chain-of-thought and no orders.\n"
+        f"NEW_FIRST_SYMBOL: {selected['symbol']}\n"
+        f"NEW_FIRST_FINAL_RANKING_ITEM:\n{json.dumps(selected, ensure_ascii=False, default=str)}\n"
+        f"NEW_TOP5_FINAL_RANKING:\n{json.dumps(final_rows, ensure_ascii=False, default=str)}\n"
+        f"NEW_FIRST_SUPPLEMENTAL_RESEARCH:\n{json.dumps(supplemental.get(selected['symbol'].upper(), {}), ensure_ascii=False, default=str)}\n"
+        f"PREVIOUS_FIRST_SYMBOL: {previous_symbol}\n"
+        f"INCOMING_ACTIVE_SELECTION: {previous_symbol}\n"
+        f"PREVIOUS_FIRST_RESULT:\n{json.dumps(previous_context, ensure_ascii=False, default=str)}\n"
+        f"PREVIOUS_FIRST_SUPPLEMENTAL_RESEARCH:\n{json.dumps(previous_supplemental, ensure_ascii=False, default=str)}\n"
+        f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{external}\n"
+    )
+    try:
+        comparison = agent._structured_deep_stage(
+            PreviousWinnerComparison,
+            "sol_new_first_vs_previous_first_comparison",
+            "SOL_NEW_VS_PREVIOUS",
+            comparison_prompt,
+            totals,
+            symbol=selected["symbol"],
+            metadata={
+                "new_first_symbol": selected["symbol"],
+                "previous_first_symbol": previous_symbol,
+                "source_result": str(source_path),
+                "previous_result": str(previous_path),
+            },
+        )
+        comparison_json = comparison.model_dump(mode="json")
+        if comparison.new_first_symbol.upper() != selected["symbol"].upper():
+            raise ValueError("Comparison returned an unexpected new first-place symbol")
+        if comparison.previous_first_symbol.upper() != previous_symbol:
+            raise ValueError("Comparison returned an unexpected previous first-place symbol")
+        if comparison.new_first_symbol.upper() == comparison.previous_first_symbol.upper() and comparison.rebalance_decision != "KEEP_PREVIOUS":
+            raise ValueError("Identical first-place symbols must produce KEEP_PREVIOUS")
+        if comparison.alpha_gap_status == "COMPARABLE" and comparison.alpha_gap is None:
+            raise ValueError("Comparable alpha gap cannot be null")
+        if comparison.alpha_gap_status == "UNKNOWN" and comparison.alpha_gap is not None:
+            raise ValueError("Unknown alpha gap must be null")
+    except ResearchPending:
+        write("result.json", {**manifest, **agent.pending_research,
+                             "supplemental_research": supplemental,
+                             "previous_first_supplemental_research": previous_supplemental,
+                             "provisional_ranking": final_ranking.model_dump(mode="json"), "usage": totals})
+        return 2
+    except Exception as exc:
+        result = {
+            **manifest,
+            "status": "FAILED",
+            "completed_supplemental_research": sorted(set(supplemental) | {previous_symbol}),
+            "missing_supplemental_research": [],
+            "errors": {"NEW_VS_PREVIOUS_COMPARISON": f"{type(exc).__name__}: {exc}"},
+            "initial_ranking": initial_ranking,
+            "initial_top5": top5_rows,
+            "supplemental_research": supplemental,
+            "previous_first_supplemental_research": previous_supplemental,
+            "final_ranking": final_ranking.model_dump(mode="json"),
+            "previous_winner_record": previous_context,
+            "usage": totals,
+            "latency_ms": (time.perf_counter() - started) * 1000,
+        }
+        write("result.json", result)
+        print("New-vs-previous comparison FAILED; see redacted result.json", flush=True)
+        return 1
+
+    result = {
+        **manifest,
+        "status": "COMPLETE",
+        "evidence_assessments": agent.evidence_assessments,
+        "completed_supplemental_research": sorted(set(supplemental) | {previous_symbol}),
+        "missing_supplemental_research": [],
+        "initial_ranking": initial_ranking,
+        "initial_top5": top5_rows,
+        "supplemental_research": supplemental,
+        "previous_first_supplemental_research": previous_supplemental,
+        "previous_winner_record": previous_context,
+        "final_ranking": final_ranking.model_dump(mode="json"),
+        "selected_symbol": selected["symbol"],
+        "selected_final_score": selected["preliminary_alpha_score"],
+        "runner_up_symbol": runner_up["symbol"],
+        "runner_up_final_score": runner_up["preliminary_alpha_score"],
+        "final_alpha_gap": selected["preliminary_alpha_score"] - runner_up["preliminary_alpha_score"],
+        "new_first_symbol": selected["symbol"],
+        "previous_first_symbol": previous_symbol,
+        "rebalance_comparison": comparison_json,
+        "rebalance_decision": comparison_json["rebalance_decision"],
+        **transition_fields(previous_symbol, selected["symbol"], comparison_json["rebalance_decision"]),
+        "selection_rationale": {**initial_rationale,
+                                **agent.selection_rationale["SOL_TOP5_FINAL_RANKING"],
+                                **agent.selection_rationale["SOL_NEW_VS_PREVIOUS"]},
+        "supplemental_findings": {symbol: agent.selection_rationale[symbol] for symbol in top5},
+        "usage": totals,
+        "latency_ms": (time.perf_counter() - started) * 1000,
+        "provider_protocol": "CHAT_COMPLETIONS via CCSwitchProvider",
+        "reasoning_parameter_status": provider.reasoning_parameter_status,
+        "reasoning_metadata_status": provider.reasoning_metadata_status,
+        "placeOrder_calls": 0,
+        "cancelOrder_calls": 0,
+        "risk_approval": "NOT_RUN",
+    }
+    result["active_selection_research"] = (previous_supplemental if result["rebalance_decision"] == "KEEP_PREVIOUS"
+                                           else supplemental[selected["symbol"].upper()])
+    write("result.json", result)
+    write("active_selection.json", {"status": "COMPLETE", "result_path": str(output / "result.json"),
+                                   **transition_fields(previous_symbol, selected["symbol"], comparison_json["rebalance_decision"])})
+    try:
+        result["reports"] = generate_reports(output / "result.json")
+        result["report_status"] = "COMPLETE"
+        sink({"event_type": "CHINESE_REPORT_COMPLETED", "metadata": result["reports"]})
+    except Exception as exc:
+        result["report_status"] = "FAILED"
+        result["report_error"] = f"{type(exc).__name__}: {exc}"
+        write("result.json", result)
+        print("Research decision saved; required Chinese DOCX report failed. Retry report generation only.", flush=True)
+        return 1
+    write("result.json", result)
+    print(
+        f"TOP5 FINAL COMPLETE; selected={selected['symbol']} score={selected['preliminary_alpha_score']}; "
+        f"runner_up={runner_up['symbol']} score={runner_up['preliminary_alpha_score']}; "
+        f"previous_first={previous_symbol}; rebalance={comparison_json['rebalance_decision']}; no orders.",
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"Top-five research startup FAILED ({type(exc).__name__}); no orders submitted", file=sys.stderr)
+        raise SystemExit(1)

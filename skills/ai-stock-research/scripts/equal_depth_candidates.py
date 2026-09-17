@@ -303,7 +303,10 @@ def main(argv=None):
             "Apply equal evidence standards to every finalist; choose research questions for this company's thesis. "
             "The candidate set is supplied only for context; do not favor a symbol because it appears in an old ranking. "
             "Explain company-specific alpha versus industry, sector, market, and macro beta; test at least three alternative "
-            "hypotheses; explain why now, expectations, priced-in level, remaining alpha, and 20-day persistence. "
+            "hypotheses; explain why now, expectations, priced-in level and remaining alpha. Treat 20-day persistence "
+            "as a default review/forecast reference only, not a minimum holding period, sell date or catalyst deadline; "
+            "a missing near-term catalyst may be recorded as UNKNOWN and must not automatically lower rank. "
+            "Price move, valuation, volatility and technical position are evidence only, not fixed vetoes or penalties. "
             "Return compact structured evidence only, with bull/base/bear scenarios and observable invalidation conditions. "
             "Use DATA_UNAVAILABLE for missing facts. Never invent prices, estimates, dates, outages, citations, or returns. "
             "Do not make an order or use hidden chain-of-thought.\n"
@@ -374,8 +377,9 @@ def main(argv=None):
                 (
                     "Rank all supplied finalists after applying equal evidence standards. Return exactly Top 5. "
                     "Scores must be relative to this single evaluation. Choose decision-relevant comparisons autonomously. "
-                    "Use UNKNOWN when evidence is unavailable; do not treat missing data as automatic "
-                    "negative evidence. Explain why rank 1 beats rank 2 and provide specific weaknesses for ranks 2 through 5.\n"
+                    "Use UNKNOWN when evidence is unavailable; do not treat missing data as automatic negative evidence. "
+                    "Do not apply style preferences, incumbent protection, fixed factor weights, price/valuation/volatility "
+                    "vetoes or a catalyst requirement. Explain why rank 1 beats rank 2 and provide specific weaknesses for ranks 2 through 5.\n"
                     f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{json.dumps(packet, ensure_ascii=False, default=str)}\n"
                     f"ALL_EQUAL_DEPTH_RESEARCH_JSON:\n{json.dumps(compact, ensure_ascii=False, default=str)}"
                 ),

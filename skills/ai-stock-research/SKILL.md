@@ -5,7 +5,7 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 
 # AI 选股研究：Luna → 当前对话模型
 
-复用现有项目，不重写选股策略。原 Sol 是代码中的角色名；本技能该角色的研究请求由**当前对话模型**执行，即发起本技能的会话所使用的模型（具体模型名由会话在本次运行时声明，不在技能内硬编码），通过 `scripts/session_handoff.py` 的交互式交接完成。**不再固定调用 `gpt-6-astra`，也不再固定 reasoning effort `medium`**：会话的 reasoning effort 不对外暴露，统一记录为 `NOT_EXPOSED_BY_SESSION`；模型身份由会话声明并标记 `SESSION_DECLARED_NOT_API_VERIFIED`，不得通过 `/models` 冒充已被服务端确认。包括横向排名、深度研究、对抗审查、委员会决策、结构修复与上一轮有效首选比较。默认不读取 IBKR 实际持仓，也不调用持仓复核插件。Luna模型及批处理参数继承项目设置。
+复用现有项目，不重写选股策略。原 Sol 是代码中的角色名；本技能该角色的研究请求由**当前对话模型**执行，即发起本技能的会话所使用的模型（具体模型名由会话在本次运行时声明，不在技能内硬编码），通过 `scripts/session_handoff.py` 的交互式交接完成。**不再固定调用 `gpt-6-astra`，也不再固定 reasoning effort `medium`**：会话的 reasoning effort 不对外暴露，统一记录为 `NOT_EXPOSED_BY_SESSION`；模型身份由会话声明并标记 `SESSION_DECLARED_NOT_API_VERIFIED`，不得通过 `/models` 冒充已被服务端确认。包括横向排名、深度研究、对抗审查、委员会决策、结构修复与上一轮有效首选比较。本技能不读取 IBKR 实际持仓，也不调用持仓复核插件。Luna模型及批处理参数继承项目设置。
 
 ## 入口与边界
 
@@ -16,6 +16,58 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 每次向 当前对话模型 提交选股或新旧首选比较请求时，必须在研究上下文中带入此目标；仅修改报告措辞不算应用。新旧比较若触发换股，必须说明换入新首选及换出上一轮有效首选的相对依据，不能以降低股票总敞口、转为现金为目的。不得仅因非关键资料缺失机械调仓。股票排名第一仅表示本轮相对优选，不能承诺正收益或真实 Alpha。
 
 此约束优先于下文允许主动选择现金的旧流程描述。已有候选结果若为 CASH/WAIT，应作为旧结果保留，重新让 当前对话模型 按本目标研究，不能由宿主强改成 BUY。API 请求失败、结果无法解析或股票身份无法确认时，应如实报告技术失败；投资资料补查后仍有缺口时，必须基于现有证据选择维持或换股；这不是现金投资建议，也不能伪造首选。保留既有研究隔离，不发送订单。本技能不读取账户数值仓位、不计算账户金额或股数，也不虚构损失预算。
+
+## 投资判断自由原则
+
+本实验的唯一投资判断目标，是测试当前对话模型能否在用户约定的股票 Universe、long-only、集中持仓和正常研究成功不主动持币的边界内，回答：**从当前可执行价格和当前已核验证据出发，在合理研究期限内，扣除合理的研究层交易摩擦假设后，哪只股票具有最高的预期相对收益？** 这里的“从现在开始”优先于历史买入价格、历史涨跌幅、历史排名、过去分数和已经发生的收益。
+
+除用户已经明确规定的股票 Universe、long-only、集中持仓、正常情况下不主动持币、研究框架与执行安全边界外，不设置预定义投资风格、固定因子偏好或机械投资淘汰规则。原则是：**No style prior. No incumbent privilege. No mechanical investment veto. Selection aggressive. Evidence strict. Execution controlled.**
+
+### 投资判断不由程序预先裁决
+
+20日/60日涨幅、年初至今涨幅、接近或创52周新高、RSI或技术超买、均线偏离、历史波动率、Beta、市盈率、EV/EBITDA、FCF Yield、高估值、周期属性、行业、事件驱动、crowding、drawdown、momentum、technical position、price extension、entry risk 或 overextension risk，均只能作为当前对话模型的研究证据。程序不得据此硬过滤、固定扣分、限制冠军资格、要求固定行业权重或把一种风格自动排在另一种风格之前，也不得用“更稳健”覆盖未来相对收益目标。
+
+过去涨幅大不等于未来机会差；过去表现落后不等于未来上涨空间大。应由当前对话模型判断当前价格相对于未来经营结果和市场预期是否仍存在 mispricing，包括市场已经计入什么、模型根据已核验证据判断什么、两者是否形成仍有可交易价值的 expectation gap，以及盈利、收入和 FCF 预期修订是否支持价格变化。还应区分价格变化来自经营结果/盈利增长还是 multiple expansion，并判断历史上涨是否已经消耗预期差。
+
+### 事件只是研究变量
+
+Event is not Alpha。事件本身通常不是 Alpha，只有市场对事件影响判断错误、反应不足或过度、事件揭示未充分计价的信息、加速错价收敛或破坏原有 thesis 时，才可能改变相对收益判断。不得因为下周没有财报、Investor Day、发布会、监管节点或明显短期新闻而机械降低排名；允许没有近期重大事件但存在持续盈利预期差、估值错配或中期经营改善的股票成为第一名。事件只用于验证 thesis、加速收敛或破坏 thesis，不得把流程退化成寻找近期事件最强的股票。
+
+### Entry Overextension 只供模型权衡
+
+`entry_risk`、`entry_overextension_risk`、`price_extension`、`overbought`、`crowding`、`momentum_risk` 等字段不得成为硬过滤器。即使 `investment_quality=HIGH`、`alpha_thesis=STRONG` 且 `entry_overextension_risk=HIGH`，也必须允许当前对话模型继续排名第一；是否放弃只能由模型结合盈利/收入/FCF修订、估值扩张、催化剂计价程度、相对强弱、剩余信息优势、expectation gap、下行不对称、供需、行业周期和竞争地位决定。不得存在“entry risk 高即淘汰”或“price extension 超过固定值即禁止冠军”的程序规则。
+
+### 新旧首选、成本与研究期限
+
+`incumbent` 身份本身没有投资优势。保留 `KEEP_PREVIOUS`、`SWITCH_TO_NEW_FIRST` 和 `active_selection`，但不设置 incumbent 默认保护、thesis broken 前不得换股、最短持有天数、固定分数/置信度/alpha gap/expected return gap replacement hurdle 或固定卖出日期。当前对话模型必须直接比较“从现在开始继续持有 incumbent”与“从现在开始切换 challenger”哪一个更可能取得更高的扣费后预期相对收益；模型认为差异落在自身判断误差内时可以 KEEP，认为小优势足够可信且能覆盖研究层摩擦时可以 SWITCH。新候选排名第一不自动 SWITCH，incumbent 没有重大利空也不自动阻止 SWITCH。
+
+历史买入成本、浮盈浮亏和已经持有的天数属于账户层记录或审计信息，不是研究层投资理由。研究层应问：“如果今天重新给我等额可投资资本，从当前价格开始，我更愿意持有 incumbent 还是 challenger？” 20个交易日继续作为默认 review horizon、comparison horizon 和 forecasting reference horizon，但不是 minimum holding period、mandatory holding period、mechanical sell date，也不是催化剂必须发生的期限。允许第2天、第5天、第10天或第20天换股，也允许超过20天继续 KEEP 或持有数月；review cadence、holding period 和 catalyst horizon 相互独立，由模型结合 thesis 自主判断。
+
+### Luna、历史分数与跨风格切换
+
+Luna 只负责检索降维、降低搜索成本。Luna排名、Luna分数、批次顺序、上一轮当前对话模型分数、历史 confidence、alpha_gap、ranking、winner 身份和历史持有收益都只能用于审计、来源追踪或上下文，不得进入本轮最终投资先验或评分；本轮必须依据当前证据重新形成判断。Luna排名较低的股票进入统一研究后，如果新证据更强，完全可以最终第一。
+
+不要求行业连续性或风格连续性。高成长、价值、周期、软件、半导体、医药、工业、能源、金融、消费、AI infrastructure、事件驱动、高估值、低估值、高波动、低波动、已大幅上涨或近期落后但基本面反转的股票均可成为第一名，只要模型认为它从当前价格开始的未来扣费后预期相对收益最高。
+
+### 风险拆分
+
+风险分析不删除，但分为三类：
+
+1. **Investment Risk Evidence**：valuation、volatility、drawdown、momentum、crowding、event risk、earnings uncertainty、cyclicality、technical extension、customer concentration、working capital、regulatory、industry cycle 和 macro sensitivity 等，只作为当前对话模型输入，不作为机械淘汰规则。模型可以认为高风险值得承担，也可以认为不值得；不使用固定 risk penalty、volatility penalty、Beta penalty、Sharpe threshold、drawdown coefficient 或 risk-adjusted score formula。
+2. **Research Integrity Controls**：股票身份与 security mapping、来源可追溯性、关键证据时效、incumbent/challenger可比性、`RETRIEVAL_FAILED` 不冒充负面事实、`UNKNOWN` 不机械视为坏消息、不虚构数据或来源、不以过期证据冒充当前事实、API失败如实记录、schema/parsing失败阻断、研究不完整不得冒充 COMPLETE、状态一致性和 candidate coverage 验证必须严格保留。
+3. **Execution Safety Controls**：本技能虽不负责真实执行，仍保留不重复下单、不交易错误证券、不超账户授权、不违规使用杠杆、账户状态未知不执行、关键市场数据不可用不执行，以及合理考虑佣金、碎股成本、价差和滑点等外层安全边界。本技能不读取账户、持仓或 IBKR，不下单，不调用 Risk Engine。
+
+### 研究层与账户执行层的摩擦边界
+
+研究层只比较 expected forward alpha 和 relative opportunity，并可使用简单、可配置的 standardized/configured research-layer trading-friction assumption；该假设不是固定 SWITCH threshold，也不是虚构的真实账户佣金。账户/执行层未来才读取 actual position、order size、fractional share status、real commission、spread、slippage、NAV、cash 和实际交易摩擦，并决定账户级执行是否值得。本技能只输出 securities-level `KEEP_PREVIOUS` / `SWITCH_TO_NEW_FIRST`，不输出实际股数、仓位、订单或账户金额。
+
+项目 `src/models.py`、`PositionManager` 和 `config.yaml` 中已有的账户复核、仓位、持有期限、风险和 replacement-threshold 字段属于生产账户/执行边界；当前 Skill 的默认 `session_handoff.py` 路径不导入、不读取、不执行这些规则，不能把它们反向带入研究层评分或换股门槛。本次不修改这些外层安全控制。
+
+### 现金和有效首选边界
+
+本实验测试选股与轮动，不测试市场择时。正常研究成功时，现金不是主动投资选择，当前对话模型必须在可投资候选中选择相对最佳股票；只有现有技术失败、数据不可用、研究无法完成、security identity无法确认、schema/parsing失败或其他既有安全阻断条件才允许流程停止。市场估值高、波动大、没有特别便宜的股票、模型信心一般或市场近期上涨，都不能单独把流程退回现金。
+
+`active_selection` 表示研究层当前有效 AI 首选，不是账户实际持仓事实。本次不新建第二套状态机、不做 broker reconciliation；未来账户级 orchestrator 可单独对账 `research_active_selection` 与 `actual_position_symbol`，二者不一致时由外层账户流程决定真实 incumbent。`selection_state.py` 只落实当前对话模型已经给出的 KEEP/SWITCH，不自行判断投资动作；历史研究结果保持不可改写，新增字段缺失统一显示 `NOT_RECORDED`。
 
 默认项目：本仓库根目录；执行时请使用项目根目录的绝对路径传给 `--project`，不要依赖固定的本机路径。
 
@@ -44,7 +96,7 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 
 每个重要 gap 至少保存 `field_name`、`symbol`、`gap_status`、`criticality`、`reason`、`source_required`、`last_checked_at`、`retrieval_attempts`、`evidence_refs`、`decision_impact`、`blocking_research`。`criticality` 只能由当前对话模型按公司、行业、商业模式和当前 thesis 判断为 `CRITICAL`、`IMPORTANT` 或 `NON_CRITICAL`；不按缺失字段数量降低分数，也不使用固定财务指标清单。`RETRIEVAL_FAILED`/`STALE` 表示研究可能尚未完成，优先补查；`NOT_PUBLIC`/`PAID_DATA_REQUIRED`/`NOT_YET_OCCURRED` 在合理检索边界后可以保留，不得无限等待或程序默认 `KEEP_PREVIOUS`。
 
-在最终 `KEEP_PREVIOUS` / `SWITCH_TO_NEW_FIRST` 之前执行 `pair_evidence_audit`，检查 incumbent 与 challenger 的市场 `as_of_basis` 是否合理接近、公司经营证据是否足够新，以及一方关键变量为 `RETRIEVAL_FAILED`/`STALE` 而另一方已经 `VERIFIED` 时是否可能改变换股方向。若存在这种 material asymmetry，必须保存 `status=NEEDS_RESEARCH`，只生成受影响两腿的定向 `research_requests`，不重跑 Luna、不重跑整个 Top 5，并继续遵守最多两轮定向补查。比较记录新增 `pair_comparison_complete`、`decision_basis_sufficient`、`material_asymmetry_resolved`；只有模型完成实质新旧比较且关键检索失败已处理到合理边界，比较阶段才可 COMPLETE。不得把 challenger 资料更新更完整本身当作优势；CRM 有最新 Investor Day 而 MPC 的裂解价差/利润捕获率/盈利修订为 `RETRIEVAL_FAILED` 时，必须先补查 MPC，不能直接 SWITCH CRM。
+在最终 `KEEP_PREVIOUS` / `SWITCH_TO_NEW_FIRST` 之前执行 `pair_evidence_audit`，检查 incumbent 与 challenger 的市场 `as_of_basis` 是否合理接近、公司经营证据是否足够新，以及一方关键变量为 `RETRIEVAL_FAILED`/`STALE` 而另一方已经 `VERIFIED` 时是否可能改变换股方向。若存在这种 material asymmetry，必须保存 `status=NEEDS_RESEARCH`，只生成受影响两腿的定向 `research_requests`，不重跑 Luna、不重跑整个 Top 5，并继续遵守最多两轮定向补查。比较记录新增 `pair_comparison_complete`、`decision_basis_sufficient`、`material_asymmetry_resolved`；只有模型完成实质新旧比较且关键检索失败已处理到合理边界，比较阶段才可 COMPLETE。不得把 challenger 资料更新更完整本身当作优势；若 challenger 有较新的事件证据而 incumbent 的关键经营变量为 `RETRIEVAL_FAILED`，必须先补查 incumbent，不能直接 SWITCH challenger。
 
 `DERIVATION_REQUIRED` 应进入 `scripts/deterministic_calculations.py` 的确定性计算，保存原始输入、公式、结果、`as_of`、来源引用和 `estimate_type=DETERMINISTIC`，解决后不继续列为 unresolved gap；不可确定计算的中周期盈利等才明确标为 `MODEL_ESTIMATE`。若 refiner/energy thesis 实质依赖周期变量，研究问题可考虑 crack spread、product inventories、refinery utilization、throughput、capture rate、maintenance/outage、earnings revisions 和 mid-cycle earnings，重点区分当前利润高位与市场对持续时间预期的上修/下修；不建立固定因子模型，也不因股价上涨或利润峰值机械扣分。
 
@@ -59,7 +111,7 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 - `rebalance_decision`：仍只能由 当前对话模型 输出 `KEEP_PREVIOUS` 或 `SWITCH_TO_NEW_FIRST`。
 - `outgoing_active_selection`：KEEP 时等于 incoming；SWITCH 时等于 new first。`active_selection` 为 outgoing 的同值别名。
 
-`scripts/selection_state.py` 只校验并落实已经由模型选择的动作，不根据分数、置信度或固定阈值选择 KEEP / SWITCH。新旧相同仍须 KEEP。例：第一周 A；第二周 B 与 A 比较后 KEEP；第三周必须比较 C 与 A。未完成的研究、待补查或比较失败不得推进该状态。
+`scripts/selection_state.py` 只校验并落实已经由模型选择的动作，不根据分数、置信度、持有天数或固定阈值选择 KEEP / SWITCH。新旧相同仍须 KEEP。例：第一周 A；第二周 B 与 A 比较后 KEEP；第三周必须比较 C 与 A。未完成的研究、待补查或比较失败不得推进该状态。`active_selection` 仍是研究层有效首选，不等同于 broker 的实际持仓。
 
 `--previous-result` 仍指向上轮结果，优先继承 outgoing。为兼容完整的旧比较结果，可用其保存的比较双方和最终动作还原有效首选；显式状态与动作冲突时报错。首次启动或只有排名的历史结果，需要显式的初始 `active_selection` 状态（例如已确认初始选择的 COMPLETE 状态文件），不能机械拿第一名初始化。旧 `previous_first_symbol` 仅保留为 incoming 的兼容字段，不再具有“上轮排名第一名”的含义。下一轮优先读取 `active_selection_research` 中与有效首选身份一致的研究记录。
 
@@ -115,7 +167,7 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 - **上一轮有效首选比较（默认）**：使用下面的“上一轮有效首选比较来源”。最终 Top 1 完成后补齐上一轮有效首选的同等证据，并由同一次当前对话模型上下文输出 `KEEP_PREVIOUS` 或 `SWITCH_TO_NEW_FIRST`。不读取账户持仓，不调用 IBKR 插件，不生成账户目标仓位。
 - **只看进度/结果**：读取独立输出目录的 `events.jsonl`、`result.json`。不要为了查看状态重新启动研究。长期监控使用产品原生heartbeat，锁定该输出目录，结束后停止监控。
 - **最终委员会失败后重放**：本轮A/B/C结果和工具事件完整时，使用 `scripts/replay_stage_d.py --project '<项目>' --source '<失败输出目录>'` 做离线预检，实际重放加 `--run`。只重新请求Stage D及其有限修复，复用原始历史组合和已有证据；原先未保存的比较上下文标UNKNOWN。输出为原始委员会研究，不执行强制选股投影或交易。缺少阶段即停止，不自动重跑全池；成功后按默认流程比较上一轮有效首选，不读取插件账户。
-- **指定新旧首选重评分**：用户只要求重新评估某个新候选并与已保存的上一轮有效首选比较时，使用 `scripts/recheck_selection_pair.py --project '<项目>' --source-result '<本轮已完成结果.json>' --verification-packet '<同口径核验packet.json>' --run`。该入口只向同一个 `CCSwitchProvider` 发起候选重评分和新旧比较请求；当前脚本固定输出 `CRM` 与 `MPC`，仅用于本次精确复核，不重跑Luna、不读取账户、不运行Risk Engine、不发送订单。比较动作仍只能是 `KEEP_PREVIOUS` 或 `SWITCH_TO_NEW_FIRST`。
+- **指定新旧首选重评分**：用户只要求重新评估某个新候选并与已保存的上一轮有效首选比较时，使用 `scripts/recheck_selection_pair.py --project '<项目>' --source-result '<本轮已完成结果.json>' --verification-packet '<同口径核验packet.json>' --challenger-symbol '<新候选>' [--incumbent-symbol '<可选的研究层有效首选>'] --run`。该入口从参数或已保存状态解析任意 challenger/incumbent，旧结果缺少新增字段时仍按兼容字段读取；不重跑Luna、不读取账户、不运行Risk Engine、不发送订单。比较动作仍只能是 `KEEP_PREVIOUS` 或 `SWITCH_TO_NEW_FIRST`，股票代码不参与 schema、状态机或报告规则。
 
 完整命令示例：
 
@@ -154,7 +206,7 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 1. 按下文“分阶段完成标准”执行全部候选统一研究、初选 Top 5 的补充检索深研及最终比较。复用候选时披露来源和日期；候选过期或无候选时说明情况，不用旧结果冒充本轮研究。初选阶段完成不代表最终首选完成。
 2. 最终 Top 1 确定后解析上一轮 COMPLETE 结果，识别旧首选；若新旧相同，记录 `KEEP_PREVIOUS`，仍保留本轮核验，不重复制造换股理由。
 3. 对旧首选补齐与 Top 5 同等的关键证据。不能只读取价格就结束为“资料不足”；记录实际检索来源、时间、核验结果和仍不可取得的资料。若补查反证改变新旧判断，允许更新比较结论。
-4. 将新第一名、旧第一名和各自带来源/日期的结构化研究资料交给同一次当前对话模型比较，明确要求回答“为什么换、为什么不换、哪些证据使差距不够”。不传账户持仓、现金、入场日、历史目标仓位或 IBKR 数据。
+4. 将新第一名、旧第一名和各自带来源/日期的结构化研究资料交给同一次当前对话模型比较，明确要求回答“从当前价格开始为什么换、为什么不换、剩余预期差在哪里、哪些证据使差异落入判断误差”。不传账户持仓、现金、入场日、历史目标仓位或 IBKR 数据。
 5. 输出 `rebalance_decision` 和方向依据。只给证券选择层面的换股/保留结论，不给账户百分比、参考金额、股数或订单指令；不运行 Risk Engine，不调用 broker。
 6. 对模型提出的关键补资料要求最多实际追加两轮；无需重跑 Luna。中文报告分别展示初选 Top 5、补查记录、最终 Top 5、新旧首选比较、调仓方向及仍未解决缺口。
 
@@ -203,7 +255,7 @@ Luna 只做广度筛选；最终首选和是否轮换必须由当前对话模型
 
 每只候选承担相同的证据核验责任；研究问题和重要信息由 当前对话模型 按公司及本轮投资论点自主决定，不设置固定研究维度清单。相同深度指相同核验标准与分析责任，不要求不同行业拥有相同指标或来源数量。公司公告/SEC链接清单与新闻摘要不能冒充已阅读的原文；未查询的字段不能标为 UNAVAILABLE。
 
-交付前列出逐股覆盖矩阵：symbol、原文来源及日期、已核实维度、缺口查询记录、深研状态与结果路径。必须核对候选总数、完成数、Missing、Duplicate；任一候选分析失败或尚未执行必要核实则报告部分完成并恢复该部分，不宣称全候选结论完成。已实际穷尽合理来源仍未知的字段可保留 UNKNOWN 并说明影响，不要求伪造完备数据。最后把全部候选的核实证据和逐股结论交给 当前对话模型 同一次比较，保留可比数值及日期，避免摘要压缩丢失已有证据后被误判为未知；输出 Top 5、首选/第二名比较及其余候选未入选理由，不预设 MPC 或其他旧首选获胜。
+交付前列出逐股覆盖矩阵：symbol、原文来源及日期、已核实维度、缺口查询记录、深研状态与结果路径。必须核对候选总数、完成数、Missing、Duplicate；任一候选分析失败或尚未执行必要核实则报告部分完成并恢复该部分，不宣称全候选结论完成。已实际穷尽合理来源仍未知的字段可保留 UNKNOWN 并说明影响，不要求伪造完备数据。最后把全部候选的核实证据和逐股结论交给 当前对话模型 同一次比较，保留可比数值及日期，避免摘要压缩丢失已有证据后被误判为未知；输出 Top 5、首选/第二名比较及其余候选未入选理由，不预设任何 incumbent 或历史首选获胜。
 
 ## 每轮正式中文报告与决策理由留存
 
@@ -211,11 +263,11 @@ Luna 只做广度筛选；最终首选和是否轮换必须由当前对话模型
 
 会话交接路径（`scripts/session_handoff.py`）与 legacy 路径有两处差异，排版前必须处理：其一，事件文件名为 `events.json`（legacy 为 `events.jsonl`）；其二，会话校验要求 `final_ranking` 为有序列表（`require_exact` 逐行读取），而 `scripts/research_report.py` 读取的是映射形态 `final_ranking.ranking`。因此会话路径须先在同一输出目录生成报告视图（把 `final_ranking` 包装为 `{"ranking": [...]}`，原始列表另存 `final_ranking_rows` 以保留可追溯性），再对该视图执行 `scripts/research_report.py --result '<报告视图>'`；**已定稿的 `result.json` 不得改写**，它是校验通过的不可变记录。同理，会话决策文件需自带 `selection_rationale`、`supplemental_findings`、`initial_ranking`、`top_five`、`final_alpha_gap` 与 `evidence_assessments`（含 `SOL_TOP5_SUPPLEMENTAL` 与 `SOL_TOP5_FINAL_RANKING` 两个 stage），否则报告排版会缺少理由字段。会话路径的 `selection_rationale` 受 `selection_rationale.py::chinese_text` 约束：正文不得出现小写拉丁字母，技术名词须写中文或大写缩写（如 `cRPO` 写“当期合同剩余履约义务”、`iPhone` 写“苹果手机”、`Pro Max` 写“高配大屏机型”）。
 
-指定股票对复核（`scripts/recheck_selection_pair.py`，或手工序列化的等价产物）沿用旧版 `PreviousWinnerComparison` 结构，该结构的字段含义与直觉相反，必须按语义而非按字面赋值：**`previous_first_symbol` 指“被复核的现任首选”，即 incoming active selection，不是“被换出的那一只”**。`scripts/selection_state.py::resolve_active_selection` 正是用 `previous_first_symbol` 反推 incoming；若把被换出的股票写进该字段（现任为 CRM 时写成 MPC），校验会抛 `Legacy previous_first_symbol disagrees with incoming active selection`，之后任何扫描 `outputs/skill-research/*/result.json` 的轮次都无法解析有效首选。现任为 CRM、指定比较对象为 MPC 时的正确赋值是：`incoming_active_selection`、`previous_first_symbol`、`new_first_symbol`、`outgoing_active_selection`、`active_selection` 全部为 `'CRM'`，另用显式字段（如 `challenger_symbol`／`compared_against_previous_first`）承载 `'MPC'`，并保留 `pair` 列表说明比较对象。序列化后必须自检 `resolve_active_selection(result.json)` 的返回值等于预期首选再收尾。该模式在 legacy 路径会经 `transition_fields` 写入 `active_selection.json`；手工序列化时应显式声明 `selection_written` 与是否改写状态，避免被误认为已完成状态写入。
+指定股票对复核（`scripts/recheck_selection_pair.py`，或手工序列化的等价产物）沿用旧版 `PreviousWinnerComparison` 结构，该结构的字段含义与直觉相反，必须按语义而非按字面赋值：**`previous_first_symbol` 指“被复核的现任首选，即 incoming active selection”，不是“被换出的那一只”**。`scripts/selection_state.py::resolve_active_selection` 用该字段反推 incoming；若显式状态、比较双方与动作冲突，校验必须停止。任意 `challenger_symbol` 与 `incumbent_symbol` 都可传入，`incoming_active_selection`、`previous_first_symbol`、`new_first_symbol`、`outgoing_active_selection`、`active_selection` 按同一状态语义序列化，并在收尾自检 `resolve_active_selection(result.json)` 的返回值。历史结果中已经存在的具体股票对仍按旧字段读取，不因本次参数化而改写。
 
 指定股票对复核的证据包须写明来源：逐条标出本轮新取的证据与从上一包结转的证据（结转项加 `carried_from` / `carried_from_as_of_basis` 标记，包级写 `evidence_provenance`），并在结转前校验上一包的 `as_of_basis` 与本轮一致——基准日不同的证据不能混入同一包，否则两条腿不可比。结转是复用同一会话内已打开的来源，不是重新取证，报告中应如实表述。
 
-同一逻辑轮次重新生成时不得不断新建目录：重复生成会留下多个近乎相同的 `*-crm-mpc-pair-recheck-*` 目录，后续扫描 `outputs/skill-research/*/result.json` 时极易取到被废弃的那一个。应就地覆盖既有轮次目录（本仓库脚本用 `PAIR_RECHECK_REUSE_DIR=<dir>` 环境变量实现），只保留一个可解析目录；确需保留旧目录时写入 `SUPERSEDED.md` 说明修正原因与取代它的目录名，不要删除，也不要让旧目录看起来仍然有效。
+同一逻辑轮次重新生成时不得不断新建目录：重复生成会留下多个近乎相同的 `*-pair-recheck-*` 目录，后续扫描 `outputs/skill-research/*/result.json` 时极易取到被废弃的那一个。应就地覆盖既有轮次目录（本仓库脚本用 `PAIR_RECHECK_REUSE_DIR=<dir>` 环境变量实现），只保留一个可解析目录；确需保留旧目录时写入 `SUPERSEDED.md` 说明修正原因与取代它的目录名，不要删除，也不要让旧目录看起来仍然有效。
 
 **同一基准日上先后完成完整选股研究与指定股票对复核时，应合并为一份完整报告，而不是并列交付两份。** 合并规则：采用「部分 → 章节 → 子标题」三级结构，章节编号跨两轮连续（完整选股研究占一至六，指定股票对复核接七至十三，统一结论为十四，附录不编号）；前置封面（标题、副标题，以及基准日／研究角色／报告范围／两部分结论／最终有效首选的信息表）、摘要表、目录。合并必须新增两样东西：其一，摘要表与状态链表，把两轮的进入时有效首选、本轮第一名、最终动作、结束后有效首选并排列出，使两轮结论是否一致一眼可见；其二，明确声明两轮分差口径不同、不可相加或互相替代（完整选股研究的分差是同一轮内第一名与第二名的模型分差，指定股票对复核的分差是同一基准日上两个指定标的的模型分差）。合并只做排版与再组织，正文仍须逐段来自已保存字段，不得改写或新写理由；产物写入完整选股研究那一轮的目录（`complete_report.docx`、`complete_report.pdf`、`complete_report_source.json`），source 文件记录两轮各自的 run 目录与 sha256，且不覆盖该轮已定稿的 `report.docx`。
 
@@ -230,8 +282,8 @@ Luna 只做广度筛选；最终首选和是否轮换必须由当前对话模型
 1. 本轮股票池（Universe）的真实规模与记录、最终候选数量/名单和进入本轮的有效首选。上游股票池未保存时明确“来源结果未记录”，不能硬填 518 或用候选数代替；全量入口保存实际股票池快照，复用候选应保留可追溯来源。
 2. 从全部最终候选选入前五名的逐股理由，以及每只其余候选未入围的主要原因。
 3. 五只股票补充深研的新正面证据、负面证据、未解决缺口。
-4. 最终第一名为何胜出、为何不选另外四只、相对第二名的优势、核心催化剂、主要风险、投资论点失效条件、投资判断置信程度和关键证据完整程度。
-5. 本轮第一名与 incoming 的直接比较，以及为何维持或切换。
+4. 最终第一名为何胜出、为何不选另外四只、相对第二名的优势、剩余 Alpha/expectation gap、当前价格与盈利/收入/FCF修订的关系、估值变化来自经营增长还是 multiple expansion、催化剂计价状态、核心催化剂、主要风险、投资论点失效条件、投资判断置信程度和关键证据完整程度。
+5. 本轮第一名与 incoming 的直接比较，以及为何维持或切换；同时说明从当前价格开始的相对预期差、交易摩擦假设和关键下行路径。
 6. 本轮第一名、incoming、最终动作、outgoing、核心理由和最大风险。
 
 报告程序只读取已保存字段并排版，不调用模型、不根据结果推测理由、不翻译后扩写。旧结果缺少当时的完整路径理由时，不补写成完整报告；先恢复并执行缺失的原研究/比较阶段，不重跑 Luna。DOCX 生成失败须明确报告交付未完成，可单独重试 `scripts/research_report.py --result '<本轮 result.json>'`（会话路径为 `--result '<报告视图>'`）；已完成决策及 active 状态保留。PDF 失败不影响研究完成，保留 DOCX 并记录失败原因。文档库使用 Codex 已配置的工作区运行时，不修改研究项目依赖；该运行时含 `python-docx`、`reportlab` 与 `pydantic`，但不含 `pyyaml`，而技能自测与 quick_validate 需要 `pyyaml`，故排版用捆绑运行时、自测用项目 `.venv`。
@@ -242,10 +294,10 @@ Luna 只做广度筛选；最终首选和是否轮换必须由当前对话模型
 
 保留已有A/B/C/D研究约束：同一次横向排名、Top5、第二名、评分差、为什么不选竞争者、Bull/Base/Bear、失效条件、置信度依据、预期超额依据。评分与置信度是模型估计，不是胜率/回归Alpha；数据不存在标UNKNOWN。不保存或展示隐藏思维链。
 
-新旧首选比较要区分新增负面证据与一直缺失的数据；不得将“涨多了”或同一个未知因素反复作为机械换股理由。说明与委员会/上一轮建议相比的新增调整理由；不为了激进选股强制换股，不放宽研究安全边界。持有天数沿用项目日历日口径，是复核期限，不是机械卖出日。
+新旧首选比较要区分新增负面证据与一直缺失的数据；不得将“涨多了”或同一个未知因素反复作为机械换股理由。说明与委员会/上一轮建议相比的新增调整理由；不为了激进选股强制换股，不放宽研究安全边界。20个交易日沿用为默认 review/comparison/forecasting reference horizon，但不是 minimum holding period、mandatory holding period 或 mechanical sell date；持有天数不阻止换股，也不强制卖出。
 
 最终用中文报告：模式、来源与结果时间、上一轮有效首选来源、实际股票池覆盖（若有）、候选数、Top5/首选/第二名/差距、核心比较、情景/失效条件、调仓方向依据、逐股 investment_confidence 与 evidence_completeness、关键补查及未解决缺口、研究角色与模型来源（当前对话模型会话声明，或显式指定的 legacy API）、token/latency（会话路径为 UNAVAILABLE / NOT_EXPOSED_BY_SESSION）、输出路径。固定注明：**仅研究建议；未调用Risk Engine审批；未发送/取消订单；未读取IBKR实际持仓。**
 
-技能更新验证：使用项目Python执行 `scripts/test_session_handoff.py --project '<项目>'`（会话研究交接的离线回归，不联网、不读生产库），以及 legacy API 路径的 `scripts/test_research.py --project '<项目>'`、`scripts/test_plugin_review.py --project '<项目>'`、Top 5 比较测试、CRM/MPC 测试、`scripts/test_evidence_discipline.py --project '<项目>'` 和 `scripts/test_evidence_gap_upgrade.py`，最后跑 skill-creator 的 quick_validate（Windows中文文件使用 `python -X utf8`）。`test_plugin_review.py` 仅保留为旧的独立插件安全回归测试，不属于本技能默认流程。不要为验证技能而启动生产worker或重新跑518只。
+技能更新验证：使用项目Python执行 `scripts/test_session_handoff.py --project '<项目>'`（会话研究交接的离线回归，不联网、不读生产库），以及 legacy API 路径的 `scripts/test_research.py --project '<项目>'`、`scripts/test_plugin_review.py --project '<项目>'`、Top 5 比较测试、任意股票对 Pair Recheck 测试、`scripts/test_evidence_discipline.py --project '<项目>'` 和 `scripts/test_evidence_gap_upgrade.py`，最后跑 skill-creator 的 quick_validate（Windows中文文件使用 `python -X utf8`）。`test_plugin_review.py` 仅保留为旧的独立插件安全回归测试，不属于本技能默认流程。不要为验证技能而启动生产worker或重新跑518只。
 
 状态与报告更新另执行 `scripts/test_selection_reporting.py --project '<项目>'`，用离线三轮状态链及固定的中文决策记录验证报告；不得为验证而运行付费选股。

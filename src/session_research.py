@@ -28,6 +28,13 @@ GAP_STATUS_VALUES = NEW_GAP_STATUS_VALUES | LEGACY_GAP_STATUS_VALUES
 MISSING_GAP_STATUS = "NOT_RECORDED"
 BLOCKING_GAP_STATUS_VALUES = {"RETRIEVAL_FAILED", "STALE"}
 CRITICALITY_VALUES = {"CRITICAL", "IMPORTANT", "NON_CRITICAL", "NOT_RECORDED"}
+SELECTION_RATIONALE_TEXT_FIELDS = (
+    "why_final_first", "why_first_over_second", "remaining_alpha",
+    "incumbent_comparison", "remaining_alpha_comparison", "core_reason", "biggest_risk",
+)
+SELECTION_RATIONALE_LIST_FIELDS = (
+    "core_catalysts", "main_risks", "thesis_invalidation_conditions", "why_keep", "why_switch",
+)
 
 
 def load(path):
@@ -232,6 +239,48 @@ def pair_evidence_audit(packet, decision, challenger, incumbent):
             "rounds_remaining": max(0, 2 - rounds), "material_asymmetry_resolved": not requires}
 
 
+def _chinese_rationale_text(value, field_name):
+    if not isinstance(value, str) or not value.strip() or value == MISSING_GAP_STATUS:
+        raise ValueError(f"Decision rationale field {field_name} must be recorded")
+    # Keep the same decision-time language boundary as the report schema,
+    # while allowing stock symbols and uppercase abbreviations in prose.
+    if not re.search(r"[\u3400-\u9fff]", value) or re.search(r"[a-z]", value):
+        raise ValueError(f"Decision rationale field {field_name} must be Chinese prose")
+
+
+def _validate_selection_rationale(decision, ranking, incumbent):
+    """Validate decision-time explanations without interpreting their content."""
+    rationale = decision.get("selection_rationale")
+    if not isinstance(rationale, dict):
+        raise ValueError("Decision-time selection_rationale is required")
+    for field_name in SELECTION_RATIONALE_TEXT_FIELDS:
+        _chinese_rationale_text(rationale.get(field_name), field_name)
+    for field_name in SELECTION_RATIONALE_LIST_FIELDS:
+        values = rationale.get(field_name)
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"Decision rationale field {field_name} must be a non-empty list")
+        for value in values:
+            _chinese_rationale_text(value, field_name)
+    finalists = rationale.get("why_not_finalists")
+    if (
+        not isinstance(finalists, list)
+        or any(not isinstance(row, dict) for row in finalists)
+        or {str(row.get("symbol", "")).upper() for row in finalists}
+        != {str(row.get("symbol", "")).upper() for row in ranking[1:]}
+        or len(finalists) != 4
+    ):
+        raise ValueError("Decision rationale must cover the four non-winning finalists")
+    for row in finalists:
+        if not isinstance(row, dict):
+            raise ValueError("Finalist rationale rows must be objects")
+        _chinese_rationale_text(row.get("reason"), "why_not_finalists")
+    comparison = rationale.get("incumbent_comparison")
+    if not comparison or str(incumbent).upper() not in str(comparison).upper() and "原有效首选" not in str(comparison):
+        # This is deliberately a light identity sanity check, not a quality
+        # test: the model remains responsible for the actual comparison.
+        raise ValueError("Decision rationale must explain the incumbent comparison")
+
+
 def prepare(args):
     source_path, previous_path, packet_path = [p.resolve() for p in (args.source_result, args.previous_result, args.verification_packet)]
     source, previous, packet = [load(p) for p in (source_path, previous_path, packet_path)]
@@ -265,7 +314,9 @@ def prepare(args):
         "initial_model": source.get("research_model"), "initial_source": source.get("source"),
         "safety": {"production_database": "NOT_OPENED", "environment_file": "NOT_READ",
                    "risk_engine": "NOT_RUN", "broker": "NOT_CONNECTED", "orders": "NOT_SENT"},
-        "objective": "Choose the relatively best verified stock; compare against incumbent; no deliberate cash allocation, no account sizing, no orders; unknown is not negative evidence.",
+        "objective": "From each stock's current executable price, choose the eligible stock with the highest expected forward relative return over a reasonable model-chosen research horizon after a reasonable standardized or configured research-layer friction assumption; compare it directly with the incoming research-layer incumbent. No style prior, incumbent privilege, fixed factor weights, mechanical investment veto, deliberate cash allocation, account sizing or orders; unknown is not negative evidence.",
+        "research_layer_friction_assumption": "STANDARDIZED_OR_CONFIGURED_RESEARCH_LAYER_ASSUMPTION_ONLY; NOT_ACCOUNT_COMMISSION_OR_SLIPPAGE",
+        "active_selection_meaning": "RESEARCH_LAYER_CURRENT_AI_PREFERENCE; NOT_BROKER_POSITION",
         "required_stages": ["TOP5_SUPPLEMENTAL", "FINAL_TOP5_RANKING", "INCUMBENT_COMPARISON"],
     }
     write(output / "manifest.json", manifest)
@@ -329,6 +380,7 @@ def validate_decision(manifest, decision, packet):
         if row.get("confidence", confidence) != confidence:
             raise ValueError("Confidence fields disagree")
     new = ranking[0]["symbol"]
+    _validate_selection_rationale(decision, ranking, incumbent)
     comparison = decision.get("comparison", {})
     if comparison.get("new_first_symbol") != new or comparison.get("previous_first_symbol") != incumbent:
         raise ValueError("Comparison identities disagree")

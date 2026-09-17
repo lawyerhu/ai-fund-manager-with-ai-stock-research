@@ -19,7 +19,7 @@ sys.path.insert(0, str(args.project.resolve()))
 
 from selection_state import SelectionTransition, resolve_active_selection, transition_fields
 from selection_rationale import TopFiveRationale
-from research_report import BUNDLED_PYTHON
+from research_report import BUNDLED_PYTHON, report_blocks
 from top_five_deep_research import extract_previous_winner, main as run_top5
 from evidence_discipline import install_evidence_discipline
 from research import ASTRA_MODEL, source_universe
@@ -37,6 +37,7 @@ def final_rationale(symbols):
     return {"why_final_first": "第一名具备本轮最明确的公司催化剂与相对机会", "why_not_finalists": [
         {"symbol": s, "reason": f"{s} 的短期催化剂相比第一名较弱"} for s in symbols[1:]],
         "why_first_over_second": "第一名相对第二名具有更明确的新增订单兑现路径",
+        "remaining_alpha": "当前价格尚未完全反映盈利与现金流改善，市场预期和已核验证据之间仍有相对机会",
         "core_catalysts": ["公司披露新增订单预计本期交付"], "main_risks": ["订单交付可能推迟"],
         "thesis_invalidation_conditions": ["公司公告取消主要订单"], "maximum_risk": "订单无法兑现导致投资论点失效"}
 
@@ -45,6 +46,7 @@ def comparison_rationale():
     return {"incumbent_comparison": "原有效首选的兑现路径更稳定，本轮新冠军的优势尚不足以替代它",
             "why_keep": ["保留原首选，因为其当前催化剂更有支撑"],
             "why_switch": ["新冠军有潜在增长优势，但本轮证据尚不足以支持切换"],
+            "remaining_alpha_comparison": "新旧首选的当前价格预期差仍需结合兑现可信度和研究层摩擦判断",
             "core_reason": "本轮维持原有效首选，保留其更明确的机会", "biggest_risk": "原首选的催化剂可能被新公告否定"}
 
 
@@ -182,6 +184,13 @@ class SelectionReportingTests(unittest.TestCase):
             self.assertNotIn("KEEP_PREVIOUS", text)
             self.assertNotIn("investment_confidence", text)
             self.assertIn("投资论点失效条件", text)
+            self.assertIn("剩余 Alpha 与当前价格机会", text)
+            self.assertIn("新旧首选的剩余 Alpha 比较", text)
+            legacy_result = deepcopy(result)
+            legacy_result["selection_rationale"].pop("remaining_alpha", None)
+            legacy_result["selection_rationale"].pop("remaining_alpha_comparison", None)
+            legacy_text = "\n".join(block[1] for block in report_blocks(legacy_result))
+            self.assertIn("NOT_RECORDED", legacy_text)
             self.assertEqual(result["reports"]["pdf_status"], "COMPLETE")
             self.assertTrue((result_path.parent / "report.pdf").stat().st_size > 1000)
             self.assertTrue((result_path.parent / "events.jsonl").is_file())

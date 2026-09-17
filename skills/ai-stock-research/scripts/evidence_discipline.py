@@ -67,7 +67,22 @@ EVIDENCE_INSTRUCTIONS = (
     "resolve it. A round limit alone does not prove a reasonable search occurred. Unsearched gaps require requests. "
     "Schema-required ranks/actions during an open request are provisional, not an abstention or a final choice. "
     "After reasonable research, make the required best-evidence decision despite genuine unresolved uncertainty. "
-    "Do not use evidence completeness to default to KEEP_PREVIOUS or trigger a switch."
+    "Do not use evidence completeness to default to KEEP_PREVIOUS or trigger a switch. "
+    "SELECTION FREEDOM: The only investment question is which eligible stock, from its current executable price, "
+    "has the highest expected relative return over a reasonable model-chosen research horizon after a reasonable "
+    "standardized or configured research-layer friction assumption. There is no style prior, incumbent privilege, "
+    "or mechanical investment veto. Twenty/sixty-day, year-to-date or 52-week price moves, highs, RSI, technical "
+    "position, volatility, beta, valuation, FCF yield, crowding, drawdown, momentum, price extension, entry risk, "
+    "industry, event status and catalyst timing are research evidence only; do not apply fixed weights, penalties, "
+    "score hurdles or champion exclusions. Past gains do not imply poor future opportunity and past lagging does not "
+    "imply upside. An event is not alpha by itself and a near-term catalyst is not required. Compare expected future "
+    "outcomes and expectation gaps, not sunk entry cost, P&L, elapsed holding time or historical rank/score. Do not "
+    "require a minimum holding period, a mechanical sell date, a broken incumbent thesis, or a fixed replacement gap. "
+    "The model may KEEP when a small advantage is inside its own error, or SWITCH when a small but well-supported "
+    "net advantage covers the research-layer friction; this is model judgment, not a program threshold. Luna and old "
+    "scores are retrieval context only, never a current-round prior. Normal research chooses the best eligible stock, "
+    "not cash; stop only for the existing technical, identity, evidence-integrity or parsing safety blocks. Account-level "
+    "commission, spread, slippage, quantity and broker state are outside this research layer and must not be invented."
 )
 
 
@@ -510,6 +525,14 @@ def install_evidence_discipline(agent, write, *, stages=None, capture_selection_
                 chinese_text(item["confidence_basis"])
         rationale = payload.pop("selection_rationale", None)
         if rationale is not None:
+            if capture_selection_path and event_prefix in {"SOL_TOP5_FINAL_RANKING", "SOL_NEW_VS_PREVIOUS"}:
+                from selection_rationale import chinese_text
+                required_key = ("remaining_alpha" if event_prefix == "SOL_TOP5_FINAL_RANKING"
+                                else "remaining_alpha_comparison")
+                remaining_alpha = rationale.get(required_key)
+                if not isinstance(remaining_alpha, str) or not remaining_alpha.strip() or remaining_alpha == "NOT_RECORDED":
+                    raise ValueError(f"{event_prefix} requires a decision-time remaining-alpha rationale")
+                chinese_text(remaining_alpha)
             from selection_rationale import check_coverage
             check_coverage(rationale, payload, getattr(self, "_candidate_symbols", []))
         symbols = [item["symbol"].upper() for item in assessments]

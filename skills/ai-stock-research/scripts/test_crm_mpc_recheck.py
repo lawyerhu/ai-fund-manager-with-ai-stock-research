@@ -1,4 +1,4 @@
-"""Offline tests for the CRM re-score and MPC comparison replay."""
+"""Offline tests for generic challenger/incumbent pair replay."""
 
 import unittest
 from pathlib import Path
@@ -8,14 +8,14 @@ import sys
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from recheck_selection_pair import CRMReScore, extract_pair_context  # noqa: E402
+from recheck_selection_pair import CandidateReScore, extract_pair_context  # noqa: E402
 from top_five_deep_research import PreviousWinnerComparison  # noqa: E402
 
 
-class CRMRecheckTests(unittest.TestCase):
+class PairRecheckTests(unittest.TestCase):
     def test_rescore_schema_is_compact_and_judgmental(self):
-        result = CRMReScore.model_validate({
-            "symbol": "CRM",
+        result = CandidateReScore.model_validate({
+            "symbol": "DELL",
             "alpha_score": 81,
             "confidence": 0.68,
             "score_basis": ["盈利增长", "估值", "催化剂"],
@@ -30,28 +30,30 @@ class CRMRecheckTests(unittest.TestCase):
             "thesis_invalidation_conditions": ["收入增长明显放缓"],
             "evidence_refs": ["same_date_market_snapshot", "cash_flow_and_official_financials"],
         })
-        self.assertEqual(result.symbol, "CRM")
+        self.assertEqual(result.symbol, "DELL")
         self.assertEqual(result.estimate_type, "SOL_MODEL_ESTIMATE")
         self.assertNotIn("target_weight", result.model_dump())
 
-    def test_pair_context_requires_saved_mpc_incumbent(self):
+    def test_pair_context_accepts_arbitrary_challenger_and_incumbent(self):
         source = {
             "status": "COMPLETE",
-            "active_selection": "MPC",
-            "final_ranking": {"ranking": [{"symbol": "CRM", "preliminary_alpha_score": 76}]},
-            "supplemental_research": {"CRM": {"symbol": "CRM"}},
-            "previous_first_symbol": "MPC",
-            "previous_first_supplemental_research": {"symbol": "MPC"},
-            "previous_winner_record": {"winner_record": {"symbol": "MPC", "preliminary_alpha_score": 86}},
+            "active_selection": "NVDA",
+            "final_ranking": {"ranking": [{"symbol": "DELL", "preliminary_alpha_score": 76}]},
+            "supplemental_research": {"DELL": {"symbol": "DELL"}},
+            "previous_first_symbol": "NVDA",
+            "previous_first_supplemental_research": {"symbol": "NVDA"},
+            "previous_winner_record": {"winner_record": {"symbol": "NVDA", "preliminary_alpha_score": 86}},
         }
-        context = extract_pair_context(source)
-        self.assertEqual(context["mpc_research"]["symbol"], "MPC")
+        context = extract_pair_context(source, challenger_symbol="DELL", incumbent_symbol="NVDA")
+        self.assertEqual(context["incumbent_research"]["symbol"], "NVDA")
+        self.assertEqual(context["challenger_symbol"], "DELL")
+        self.assertEqual(context["incumbent_symbol"], "NVDA")
         self.assertEqual(context["previous_score"], 76)
 
     def test_comparison_schema_rejects_review_required(self):
         payload = {
-            "new_first_symbol": "CRM",
-            "previous_first_symbol": "MPC",
+            "new_first_symbol": "DELL",
+            "previous_first_symbol": "NVDA",
             "rebalance_decision": "REVIEW_REQUIRED",
             "alpha_gap": None,
             "alpha_gap_status": "UNKNOWN",

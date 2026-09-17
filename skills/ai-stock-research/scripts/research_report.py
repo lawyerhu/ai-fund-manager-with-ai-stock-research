@@ -96,7 +96,9 @@ def report_blocks(result):
     resolve_active_selection(result)
     rationale = result["selection_rationale"]
     for schema in (TopFiveRationale, FinalSelectionRationale, IncumbentRationale):
-        schema.model_validate({key: rationale[key] for key in schema.model_fields})
+        # New narrative fields default to NOT_RECORDED so historical reports
+        # remain readable without inventing a past judgment.
+        schema.model_validate({key: rationale.get(key, "NOT_RECORDED") for key in schema.model_fields})
     check_coverage({key: rationale[key] for key in ("why_top5", "why_not_others")}, result["initial_ranking"], result["candidate_symbols"])
     check_coverage({"why_not_finalists": rationale["why_not_finalists"]}, result["final_ranking"], result["top_five"])
     blocks = [("title", "人工智能选股研究报告"),
@@ -122,6 +124,7 @@ def report_blocks(result):
     para("最终候选名单", "、".join(result["candidate_symbols"]))
     para("候选来源记录", result.get("source_decision_id") or "本轮保存的统一候选研究")
     para("进入本轮的有效首选", result["incoming_active_selection"])
+    para("研究层交易摩擦假设", result.get("research_layer_friction_assumption", "NOT_RECORDED"))
 
     heading("二 从最终候选中选出前五名")
     for row in result["initial_ranking"]["ranking"]:
@@ -159,6 +162,8 @@ def report_blocks(result):
     para("本轮第一名与第二名的模型分差", result["final_alpha_gap"])
     para("本轮第一名", result["new_first_symbol"])
     points([rationale["why_final_first"]])
+    blocks.append(("h2", "剩余 Alpha 与当前价格机会"))
+    para("剩余 Alpha 判断", rationale.get("remaining_alpha", "NOT_RECORDED"))
     blocks.append(("h2", "为什么不选择另外四只股票"))
     for row in rationale["why_not_finalists"]:
         para(row["symbol"], row["reason"])
@@ -185,6 +190,8 @@ def report_blocks(result):
             blocks.append(("p", f"不对称变量：{item.get('symbol')} 的 {item.get('field_name')} 为 {item.get('gap_status')}，"
                            f"另一腿已有 {item.get('other_evidence_status')}；可能改变方向：{item.get('could_change_direction')}。"))
     points([rationale["incumbent_comparison"]])
+    blocks.append(("h2", "新旧首选的剩余 Alpha 比较"))
+    para("成对剩余 Alpha 判断", rationale.get("remaining_alpha_comparison", "NOT_RECORDED"))
     blocks.append(("h2", "维持原首选的理由与取舍"))
     points(rationale["why_keep"])
     blocks.append(("h2", "切换至新首选的理由与取舍"))

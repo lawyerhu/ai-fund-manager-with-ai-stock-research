@@ -1,9 +1,10 @@
-"""Deeply research the saved Top 5, then compare its winner with the incumbent.
+"""Legacy-API deep research for the saved Top 5 and its incumbent comparison.
 
-All model stages run through the project's CCSwitch provider using the skill's
-fixed ``gpt-5.6-sol`` / ``medium`` setting. The comparison is gated on a
-current-packet market snapshot that covers both the new first-place stock and
-the incumbent on one aligned market date.
+The default Skill path delegates all research decisions to the current
+conversation through ``session_handoff.py``. This compatibility path is only
+used when explicitly selected and keeps the project's CCSwitch provider. The
+comparison is gated on a current-packet market snapshot that covers both the
+new first-place stock and the incumbent on one aligned market date.
 """
 from __future__ import annotations
 
@@ -42,7 +43,25 @@ EVIDENCE_PACKET_INSTRUCTIONS = (
     "without a prescribed direction, target, ceiling or missing-field penalty. Briefly explain the decisive "
     "support and counterevidence, including only uncertainties material to your choice. Confidence expresses "
     "subjective conviction in that judgment, not a calibrated probability of profit. Distinguish observed "
-    "facts from assumptions and model estimates; do not invent missing data or call a research quote executable."
+    "facts from assumptions and model estimates; do not invent missing data or call a research quote executable. "
+    "Keep RETRIEVAL_FAILED, STALE and UNKNOWN as evidence-status facts, not as invented negative fundamentals. "
+    "Preserve schema validation, candidate identity validation and evidence provenance as hard research-integrity controls."
+    " The sole investment question is: from the current executable price, over a reasonable model-chosen research "
+    "horizon, which eligible stock has the highest expected relative return after a reasonable standardized or "
+    "configured research-layer friction assumption? There is no style prior, incumbent privilege, mechanical veto "
+    "or fixed factor weighting. Price moves over any lookback, 52-week highs, RSI, technical position, valuation, "
+    "volatility, beta, crowding, drawdown, momentum, price extension, entry-overextension risk, industry and event "
+    "status are evidence for judgment only; never apply a hard filter, fixed penalty, score hurdle or champion "
+    "exclusion. Past gains do not imply poor future opportunity and past underperformance does not imply upside. "
+    "An event is not alpha by itself and a near-term catalyst is not required. Assess the remaining expectation gap, "
+    "earnings/revenue/FCF revisions, valuation expansion versus operating improvement, catalyst pricing and downside "
+    "as relevant to the thesis. Ignore sunk entry cost, P&L, historical rank/score and elapsed holding time as "
+    "investment reasons. Do not require a minimum holding period, mechanical sell date, broken incumbent thesis or "
+    "fixed replacement hurdle. You may KEEP when a small apparent advantage is inside your own error, or SWITCH "
+    "when a small but highly credible net advantage covers research friction; that is model judgment, not a program "
+    "threshold. Luna ranking is retrieval context only, not a final prior. Normal successful research selects among "
+    "eligible stocks rather than cash. Account-level commissions, spread, slippage, quantity and broker state are "
+    "outside this research layer and must not be invented."
 )
 
 
@@ -217,6 +236,9 @@ class PreviousWinnerComparison(BaseModel):
     rebalance_decision: Literal["SWITCH_TO_NEW_FIRST", "KEEP_PREVIOUS"]
     alpha_gap: float | None = None
     alpha_gap_status: Literal["COMPARABLE", "UNKNOWN"]
+    # Backward-compatible narrative field; the decision-time rationale carries
+    # the same comparison in the final report when it was recorded.
+    remaining_alpha_comparison: str = "NOT_RECORDED"
     why_new_beats_previous: list[str] = Field(min_length=1, max_length=5)
     why_keep_previous: list[str] = Field(min_length=1, max_length=5)
     evidence_refs: list[str] = Field(min_length=1, max_length=8)
@@ -421,6 +443,9 @@ def main(argv=None):
         "source_decision_id": (source.get("source") or {}).get("decision_id"),
         "top_five_count": 5,
         "top_five": top5,
+        "objective": "From current executable prices, select the eligible stock with the highest expected forward relative return over a reasonable model-chosen horizon after a reasonable research-layer friction assumption; no style prior, incumbent privilege or mechanical investment veto.",
+        "research_layer_friction_assumption": "STANDARDIZED_OR_CONFIGURED_RESEARCH_LAYER_ASSUMPTION_ONLY; NOT_ACCOUNT_COMMISSION_OR_SLIPPAGE",
+        "active_selection_meaning": "RESEARCH_LAYER_CURRENT_AI_PREFERENCE; NOT_BROKER_POSITION",
         "safety": "RESEARCH_ONLY; source result read-only; no broker/Risk Engine instance",
         "placeOrder_calls": 0,
         "cancelOrder_calls": 0,
@@ -468,8 +493,11 @@ def main(argv=None):
             "drift/revision observations from issuer guidance and from price-target actions. For cash flow, preserve "
             "the reported period and GAAP/non-GAAP basis. For catalysts and peer data, name the source date or say "
             "UNKNOWN. "
-            "This is a 20-trading-day research horizon. Do not invent an exact return, consensus revision, outage, "
-            "spread, quote or probability. Explicitly say what new evidence confirms, weakens or leaves unresolved. "
+            "Use 20 trading days as the default review/comparison/forecasting reference horizon only; it is not a "
+            "minimum or mandatory holding period, mechanical sell date, or deadline for a catalyst. The model may "
+            "choose days, weeks, months or quarters when the thesis warrants it. Do not invent an exact return, "
+            "consensus revision, outage, spread, quote or probability. Explicitly say what new evidence confirms, "
+            "weakens or leaves unresolved. "
             "Confidence may rise or fall; do not force it upward. Return compact structured DeepDiveResearch JSON only.\n"
             f"SYMBOL: {symbol}\n"
             f"INITIAL_UNIFIED_RANKING_ITEM:\n{json.dumps(next(row for row in top5_rows if str(row.get('symbol')).upper() == symbol), ensure_ascii=False, default=str)}\n"
@@ -530,8 +558,13 @@ def main(argv=None):
         "and a judgmental 0-100 score in preliminary_alpha_score that is comparable only within this final call. "
         f"{EVIDENCE_PACKET_INSTRUCTIONS} Do not copy initial scores mechanically. Weigh the same-date common "
         "evidence you judge material alongside company-specific research. Disclose material gaps. "
-        "UNKNOWN is unresolved evidence, not a reason "
-        "to invent a negative fact. Include concrete strengths and weaknesses, and explain why #1 beats #2. "
+        "UNKNOWN is unresolved evidence, not a reason to invent a negative fact. Include concrete strengths and "
+        "weaknesses, and explain why #1 beats #2 from the current price forward. The narrative must explicitly "
+        "address the remaining expectation gap: what the market appears to price, what the verified evidence implies, "
+        "whether past price movement has consumed the gap, whether earnings/revenue/FCF revisions support the price, "
+        "whether valuation change came from operating growth or multiple expansion, catalyst pricing status, the "
+        "most important downside path and why #1 is better than the other candidates. Do not turn these topics into "
+        "fixed factor weights or vetoes. "
         "This ranking is not a trade order, expected return, probability or statistical alpha. Return only schema JSON.\n"
         f"TOP5_SYMBOLS: {json.dumps(top5, ensure_ascii=False)}\n"
         f"INITIAL_TOP5_RANKING:\n{json.dumps(top5_rows, ensure_ascii=False, default=str)}\n"
@@ -583,8 +616,9 @@ def main(argv=None):
             "prior research using the labeled evidence layers from VERIFIED_EXTERNAL_EVIDENCE_JSON. Choose the material "
             f"questions for this company's investment thesis. {EVIDENCE_PACKET_INSTRUCTIONS} "
             "Use the same-date market and revision sections when available, while preserving UNKNOWN for fields not "
-            "covered for the incumbent. This is a 20-trading-day "
-            "research horizon. Do not invent an exact return, consensus revision, event, spread, quote or probability. "
+            "covered for the incumbent. Use 20 trading days as a review/comparison/forecasting reference only, not a "
+            "minimum holding period, mechanical sell date or catalyst deadline. The model may choose a longer or "
+            "shorter thesis horizon. Do not invent an exact return, consensus revision, event, spread, quote or probability. "
             "Return compact structured DeepDiveResearch JSON only.\n"
             f"PREVIOUS_SYMBOL: {previous_symbol}\n"
             f"PREVIOUS_RESULT_RECORD:\n{json.dumps(previous_context, ensure_ascii=False, default=str)}\n"
@@ -681,11 +715,16 @@ def main(argv=None):
         "previous final KEEP/SWITCH decision, in one common research "
         "context. This is a security-selection rotation recommendation only, not an account review. Do not read or "
         "infer holdings, cash, target weights, shares, trade costs or broker state. Return exactly the two symbols "
-        f"provided. {EVIDENCE_PACKET_INSTRUCTIONS} Choose one rebalance_decision: SWITCH_TO_NEW_FIRST only when the new first has a sufficiently "
-        "supported relative advantage; KEEP_PREVIOUS when the prior first remains better or the evidence gap is not "
-        "actionable. After documented evidence searches, make a best-available-evidence choice even when important "
-        "fields remain unresolved. Do not abstain, request review, or automatically keep the incumbent because data "
-        "are missing. A research_requests entry suspends finality until Codex has performed the requested search. "
+        f"provided. {EVIDENCE_PACKET_INSTRUCTIONS} Choose exactly one rebalance_decision based on the direct forward-looking comparison: "
+        "from current executable prices, is continuing with the incumbent or switching to the challenger more likely "
+        "to deliver the higher relative return after a reasonable research-layer friction assumption? There is no "
+        "fixed score, confidence, alpha-gap or replacement hurdle. The model may KEEP when a small challenger edge "
+        "is within its own estimation error, or SWITCH when a small but highly credible net edge covers friction; "
+        "neither is incumbent protection or a program rule. Do not require the incumbent thesis to be broken, a minimum "
+        "holding period, a fixed elapsed time, a catalyst within 20 trading days, or a particular style/industry. "
+        "After documented evidence searches, make a best-available-evidence choice even when important fields remain "
+        "unresolved. Do not abstain, request review, or automatically keep the incumbent because data are missing. "
+        "A research_requests entry suspends finality until Codex has performed the requested search. "
         "Do not treat the challenger's newer or more complete public information as an investment advantage merely "
         "because the incumbent's key variable is RETRIEVAL_FAILED or STALE. First resolve that asymmetry; only then "
         "may a switch rely on evidence that the incumbent variable actually weakened, or that it is objectively not "
@@ -695,6 +734,10 @@ def main(argv=None):
         "consider crack spread, inventories, utilization, throughput, capture rate, maintenance/outage, earnings "
         "revisions and mid-cycle earnings, while distinguishing current peak profit from expectations about its "
         "duration; do not apply a fixed factor formula or mechanically penalize a risen price or peak profit. "
+        "Explain the remaining Alpha / expectation gap, including what is already priced, how earnings/revenue/FCF "
+        "revisions relate to price, whether multiple expansion did the work, whether catalysts are unpriced/partly "
+        "priced/fully priced, and the key downside path. Event presence is evidence, not Alpha, and no near-term event "
+        "is required. Ignore entry cost, floating P&L and holding time as sunk-cost reasons. "
         "Return pair_comparison_complete, decision_basis_sufficient and material_asymmetry_resolved as true only "
         "after the substantive pair comparison and reasonable handling of decision-critical retrieval failures. "
         "The structural pair audit below is context, not an investment score or an automatic action. "

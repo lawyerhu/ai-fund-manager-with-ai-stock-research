@@ -61,6 +61,22 @@ def decision(action="SWITCH_TO_NEW_FIRST"):
         "supplemental_research": [row(symbol) for symbol in CANDIDATES],
         "final_ranking": [{**row(symbol), "rank": index + 1} for index, symbol in enumerate(CANDIDATES)],
         "incumbent_research": row(INCUMBENT),
+        "selection_rationale": {
+            "why_final_first": "第一名从当前价格出发具有更强的未来相对收益证据",
+            "why_not_finalists": [{"symbol": symbol, "reason": "该候选的当前预期差或兑现路径相对较弱"}
+                                  for symbol in CANDIDATES[1:]],
+            "why_first_over_second": "第一名的盈利预期差和兑现路径相对第二名更有支撑",
+            "remaining_alpha": "市场预期尚未完全反映当前经营证据，当前价格仍有相对机会",
+            "incumbent_comparison": "相对 AAPL，当前新候选的前瞻预期差更具吸引力",
+            "remaining_alpha_comparison": "新候选相对原有效首选的预期差足以支持本轮比较",
+            "core_catalysts": ["经营证据继续改善并推动预期修订"],
+            "main_risks": ["经营改善不及预期导致相对机会收窄"],
+            "thesis_invalidation_conditions": ["关键经营证据反转并否定当前论点"],
+            "why_keep": ["若新旧差异落入判断误差范围，继续保留原有效首选"],
+            "why_switch": ["若前瞻优势可信且足以覆盖研究层摩擦，则切换"],
+            "core_reason": "本轮根据当前价格和已核验证据选择相对机会更高的股票",
+            "biggest_risk": "未来经营结果与当前前瞻判断出现显著偏离",
+        },
         "comparison": {"new_first_symbol": NEW_FIRST, "previous_first_symbol": INCUMBENT,
                        "rebalance_decision": action, "why_keep": "incumbent still valid",
                        "why_switch": "new first has better verified evidence",
@@ -125,6 +141,9 @@ class SessionHandoffTests(unittest.TestCase):
             self.assertEqual(manifest["api_calls"], 0)
             self.assertEqual(manifest["incoming_active_selection"], INCUMBENT)
             self.assertEqual(manifest["initial_top_five"], CANDIDATES)
+            self.assertIn("current executable price", manifest["objective"])
+            self.assertIn("highest expected forward relative return", manifest["objective"])
+            self.assertEqual(manifest["active_selection_meaning"], "RESEARCH_LAYER_CURRENT_AI_PREFERENCE; NOT_BROKER_POSITION")
             self.assertEqual(manifest["safety"]["orders"], "NOT_SENT")
             self.assertFalse((run / "result.json").exists())
 
@@ -165,6 +184,17 @@ class SessionHandoffTests(unittest.TestCase):
             write_json(decision_path, payload)
             from session_handoff import main
             with self.assertRaisesRegex(ValueError, "current-conversation provenance"):
+                main(["finalize", "--project", str(PROJECT), "--run-directory", str(run),
+                      "--decision", str(decision_path), "--evidence", str(evidence)])
+
+    def test_finalize_requires_decision_time_remaining_alpha_rationale(self):
+        with TemporaryDirectory() as directory:
+            run, decision_path, evidence = self.prepare(directory)
+            payload = decision()
+            del payload["selection_rationale"]["remaining_alpha"]
+            write_json(decision_path, payload)
+            from session_handoff import main
+            with self.assertRaisesRegex(ValueError, "remaining_alpha"):
                 main(["finalize", "--project", str(PROJECT), "--run-directory", str(run),
                       "--decision", str(decision_path), "--evidence", str(evidence)])
 

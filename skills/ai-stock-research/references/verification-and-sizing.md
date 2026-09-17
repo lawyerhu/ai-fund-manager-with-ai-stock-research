@@ -1,6 +1,8 @@
 # 主动核实与新旧首选比较
 
-本实验遵守 SKILL.md 的“排除主动持币”目标：正常研究在股票之间选择、持有或换仓，现金仅作为费用/交易余款。正常研究只允许维持或换股。资料不足先补查，仍不可得则由模型基于现有证据二选一；API/解析等技术失败须如实报告，宿主不得伪造模型决策。向当前对话模型的选股和新旧首选比较上下文传入该目标；本参考不读取账户、持仓或账户约束。
+本实验遵守 SKILL.md 的“排除主动持币”目标：正常研究在股票之间选择、持有或换仓，现金仅作为费用/交易余款。正常研究只允许维持或换股。资料不足先补查，仍不可得则由模型基于现有证据二选一；API/解析等技术失败须如实报告，宿主不得伪造模型决策。向当前对话模型的选股和新旧首选比较上下文传入该目标；本参考不读取账户、持仓、IBKR 或账户约束。
+
+研究判断的唯一目标是从当前可执行价格出发，在合理、由模型选择的研究期限内，扣除简单且可配置的研究层交易摩擦假设后，选择预期相对收益最高的合格股票。不存在风格先验、incumbent 默认保护、固定因子权重或机械投资否决；涨幅、估值、波动、技术位置、动量、crowding、回撤、price extension、entry risk 和事件均是模型可自主权衡的证据。历史成本、浮盈浮亏、持有天数、Luna 排名和历史分数不进入本轮投资先验。事件本身不是 Alpha，也不要求短期催化剂。研究层假设不等于账户真实佣金、价差或滑点，账户级执行由外层系统另行判断。
 
 ## 选股阶段的主动核实矩阵
 
@@ -16,7 +18,7 @@
 - 行业和宏观驱动因素：使用适用的官方数据源核实库存、开工率、价格、利差、需求和事件日历；行业数据不能直接当作公司已实现数据。
 - 流动性、波动性、回撤和下行情景；历史涨幅是结果，不是未来 Alpha 证明。
 
-优先使用公司公告、财报、IR/SEC、交易所、政府或监管机构、官方统计机构等原始来源；具体来源由 当前对话模型 按研究问题自主选择，不限于此列表；行情需要时可使用已验证的 IBKR 只读市场数据，但不调用账户/持仓接口。搜索摘要只用于定位线索；聚合数据须核对其原始来源、口径和可靠性。每条证据必须有 `source_url`、发布日期、报告期间/`as_of`、`retrieved_at`、结构化事实、限制和 `VERIFIED/CONFLICT/UNAVAILABLE/NOT_APPLICABLE` 状态；未实际打开的来源不能标为已核实。缺口另用 `gap_status` 区分 `VERIFIED`、`NOT_PUBLIC`、`NOT_YET_OCCURRED`、`RETRIEVAL_FAILED`、`PAID_DATA_REQUIRED`、`DERIVATION_REQUIRED`、`INSUFFICIENT_SPECIFICITY`、`CONFLICTING_EVIDENCE`、`STALE` 与 `NOT_APPLICABLE`；旧的 `UNAVAILABLE/CONFLICT` 只作兼容读取，不把它们自动解释为负面事实。
+优先使用公司公告、财报、IR/SEC、交易所、政府或监管机构、官方统计机构等原始来源；具体来源由 当前对话模型 按研究问题自主选择，不限于此列表；本 Skill 不读取 IBKR，行情只能来自允许的只读研究数据或用户提供的可追溯资料。搜索摘要只用于定位线索；聚合数据须核对其原始来源、口径和可靠性。每条证据必须有 `source_url`、发布日期、报告期间/`as_of`、`retrieved_at`、结构化事实、限制和 `VERIFIED/CONFLICT/UNAVAILABLE/NOT_APPLICABLE` 状态；未实际打开的来源不能标为已核实。缺口另用 `gap_status` 区分 `VERIFIED`、`NOT_PUBLIC`、`NOT_YET_OCCURRED`、`RETRIEVAL_FAILED`、`PAID_DATA_REQUIRED`、`DERIVATION_REQUIRED`、`INSUFFICIENT_SPECIFICITY`、`CONFLICTING_EVIDENCE`、`STALE` 与 `NOT_APPLICABLE`；旧的 `UNAVAILABLE/CONFLICT` 只作兼容读取，不把它们自动解释为负面事实。
 
 将上述证据和 `gap_audit` 以精简的脱敏 `verification_packet` 交给同一次当前对话模型研究上下文（仅 legacy API 路径才使用与 capability test 相同的 CCSwitchProvider 请求）。Top 5 packet 保留 `evidence`、`as_of_basis` 和 `gap_audit`；金融数据分区按 当前对话模型 认定的关键问题组织，已有分区可沿用但不是必填指标。每个重要 gap 至少保存 `field_name`、`symbol`、`gap_status`、`criticality`、`reason`、`source_required`、`last_checked_at`、`retrieval_attempts`、`evidence_refs`、`decision_impact` 和 `blocking_research`；`criticality` 由模型按公司/行业/thesis 判断，不按字段数量评分。实际采用的证据保存来源、观察日期、报告期间、口径和限制。禁止把长篇原始网页、重复批次输出或未经核验的模型断言直接塞入最终请求。缺口出现时先实际查询、打开原文、尝试适用的替代权威来源并做可追溯计算；不能把“还没查”直接写成 `UNAVAILABLE`。原始数据已经公开时，`DERIVATION_REQUIRED` 必须进入确定性计算，保留输入、公式、结果、`as_of` 和来源引用，不让模型补数字，也不继续作为 unresolved gap。若经过有记录的尝试仍查不到，保留精确状态和影响，不要让模型填补数字。只有同步完成的回报、估值和因子数据才能生成数值 `alpha_gap` 或 SPY/QQQ 超额预期，否则报告为 `UNKNOWN`。
 

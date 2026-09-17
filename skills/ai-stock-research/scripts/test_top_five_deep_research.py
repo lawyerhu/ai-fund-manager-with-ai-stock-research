@@ -8,7 +8,13 @@ import unittest
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from top_five_deep_research import PreviousWinnerComparison, extract_previous_winner, validate_evidence_packet
+from top_five_deep_research import (
+    PairMarketSnapshotRequired,
+    PreviousWinnerComparison,
+    extract_previous_winner,
+    require_pair_market_snapshot,
+    validate_evidence_packet,
+)
 
 
 class TopFiveComparisonTests(unittest.TestCase):
@@ -78,7 +84,7 @@ class TopFiveComparisonTests(unittest.TestCase):
             "evidence": [{"symbol": "TEST", "status": "UNKNOWN"}],
             "as_of_basis": {"research_date": "2026-09-13"},
             "gap_audit": {},
-            "company_specific_question": [{"question": "Company-specific evidence chosen by GPT-6"}],
+            "company_specific_question": [{"question": "Company-specific evidence chosen by the research model"}],
         })
 
     def test_evidence_packet_allows_explicit_unknowns(self):
@@ -93,6 +99,38 @@ class TopFiveComparisonTests(unittest.TestCase):
             "gap_audit": {"still_unknown": ["peer metrics"]},
         }
         validate_evidence_packet(packet)
+
+    def test_pair_snapshot_requires_current_packet_coverage_for_both_symbols(self):
+        packet = {
+            "as_of_basis": {"market_snapshot_date": "2026-09-15"},
+            "project_same_basis_market_data": [
+                {"symbol": "CRM", "status": "OBSERVED_SAME_SESSION", "source": "Yahoo", "last_bar_at": "2026-09-15T20:00:00Z", "facts": {"price": 259.43}},
+                {"symbol": "MPC", "status": "OBSERVED_SAME_SESSION", "source": "Yahoo", "last_bar_at": "2026-09-15T20:00:00Z", "facts": {"price": 396.45}},
+            ],
+        }
+        aligned = require_pair_market_snapshot(packet, "CRM", "MPC")
+        self.assertEqual(aligned["section"], "project_same_basis_market_data")
+        self.assertEqual(aligned["as_of_date"], "2026-09-15")
+        self.assertEqual(set(aligned["symbols"]), {"CRM", "MPC"})
+
+    def test_pair_snapshot_rejects_missing_or_misaligned_incumbent(self):
+        missing = {
+            "as_of_basis": {"market_snapshot_date": "2026-09-15"},
+            "same_date_market_snapshot": [
+                {"symbol": "CRM", "status": "VERIFIED", "observed_at": "2026-09-15T20:00:00Z", "facts": {"price": 259.43}},
+            ],
+        }
+        with self.assertRaises(PairMarketSnapshotRequired):
+            require_pair_market_snapshot(missing, "CRM", "MPC")
+        misaligned = {
+            "as_of_basis": {"market_snapshot_date": "2026-09-15"},
+            "same_date_market_snapshot": [
+                {"symbol": "CRM", "status": "VERIFIED", "observed_at": "2026-09-15T20:00:00Z", "facts": {"price": 259.43}},
+                {"symbol": "MPC", "status": "VERIFIED", "observed_at": "2026-09-14T20:00:00Z", "facts": {"price": 396.45}},
+            ],
+        }
+        with self.assertRaises(PairMarketSnapshotRequired):
+            require_pair_market_snapshot(misaligned, "CRM", "MPC")
 
 
 if __name__ == "__main__":

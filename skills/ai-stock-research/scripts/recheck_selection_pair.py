@@ -20,6 +20,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from evidence_discipline import ResearchPending, install_evidence_discipline
+from research_model import api_effort
 from selection_state import resolve_active_selection, transition_fields
 
 
@@ -32,6 +33,7 @@ from top_five_deep_research import (  # noqa: E402
     EVIDENCE_PACKET_INSTRUCTIONS,
     NoTradingImports,
     PreviousWinnerComparison,
+    pair_evidence_audit,
     validate_evidence_packet,
 )
 
@@ -137,7 +139,7 @@ def merge_evidence_addenda(packet: dict, addendum_paths: list[Path]) -> dict:
 
 def _crm_prompt(context: dict, packet: dict) -> str:
     return (
-        "You are GPT-6 Astra. Re-score CRM independently for a concentrated-alpha research horizon of 20 "
+        "You are the research decision model for the current run. Re-score CRM independently for a concentrated-alpha research horizon of 20 "
         "trading days. This is a fresh single-stock assessment, not an order, account review, Risk Engine decision, "
         "or broker action. Return exactly one compact CRMReScore JSON object. alpha_score is a judgmental 0-100 "
         "relative opportunity score for this call, not a probability of profit, backtest result, or statistical alpha. "
@@ -157,7 +159,7 @@ def _crm_prompt(context: dict, packet: dict) -> str:
     )
 
 
-def _comparison_prompt(context: dict, crm_rescore: dict, packet: dict) -> str:
+def _comparison_prompt(context: dict, crm_rescore: dict, packet: dict, pair_audit: dict) -> str:
     return (
         "Compare CRM, the newly rescored candidate, with MPC, the saved previous first-place research selection, "
         "in one common evidence context. This is a security-selection rotation recommendation only. Do not inspect "
@@ -165,8 +167,17 @@ def _comparison_prompt(context: dict, crm_rescore: dict, packet: dict) -> str:
         "new_first_symbol=CRM and previous_first_symbol=MPC in the PreviousWinnerComparison schema. "
         f"{EVIDENCE_PACKET_INSTRUCTIONS} "
         "You must choose exactly one rebalance_decision: SWITCH_TO_NEW_FIRST or KEEP_PREVIOUS. After the supplied "
-        "evidence, make a best-available-evidence choice even if fields remain UNKNOWN. Do not abstain, return "
-        "REVIEW_REQUIRED, default to KEEP_PREVIOUS merely because data are incomplete, or choose CASH. Explain why "
+        "evidence, make a best-available-evidence choice even if fields remain unresolved. Do not abstain, return "
+        "REVIEW_REQUIRED, default to KEEP_PREVIOUS merely because data are incomplete, or choose CASH. Do not "
+        "treat CRM's newer or more complete public information as an investment advantage merely because MPC's "
+        "key variable is RETRIEVAL_FAILED or STALE; first resolve that asymmetry. A switch requires evidence that "
+        "MPC actually weakened, or that the missing item is objectively not public/affordable and the remaining "
+        "evidence still supports CRM. NOT_PUBLIC, PAID_DATA_REQUIRED and NOT_YET_OCCURRED may remain after a "
+        "reasonable search and do not by themselves block the final model decision. If an energy/refiner thesis "
+        "depends on the cycle, consider crack spread, inventories, utilization, throughput, capture rate, "
+        "maintenance/outage, earnings revisions and mid-cycle earnings; distinguish peak profit from expectations "
+        "about duration without applying a fixed factor model. Return pair_comparison_complete, "
+        "decision_basis_sufficient and material_asymmetry_resolved as true only after the substantive pair audit. Explain why "
         "the selected action is preferable to its alternative, including material assumptions and what evidence would "
         "reverse it. Re-evaluate both securities in this request; do not subtract CRM's new score from MPC's old "
         "score. Set alpha_gap_status=COMPARABLE with a numeric gap only if a same-context comparable gap is explicitly "
@@ -176,6 +187,7 @@ def _comparison_prompt(context: dict, crm_rescore: dict, packet: dict) -> str:
         f"CRM_PRIOR_CONTEXT:\n{_safe_json({'ranking_record': context['crm_row'], 'research': context['crm_research']})}\n"
         f"PREVIOUS_FIRST_SYMBOL: MPC\nMPC_PRIOR_CONTEXT:\n{_safe_json(context['mpc_context'])}\n"
         f"MPC_SUPPLEMENTAL_RESEARCH:\n{_safe_json(context['mpc_research'])}\n"
+        f"PAIR_EVIDENCE_AUDIT:\n{_safe_json(pair_audit)}\n"
         f"VERIFIED_EXTERNAL_EVIDENCE_JSON:\n{_safe_json(packet)}\n"
     )
 
@@ -197,9 +209,10 @@ def main(argv=None) -> int:
     packet_path = args.verification_packet.resolve()
     source = load_json(source_path)
     packet = load_json(packet_path)
-    validate_evidence_packet(packet)
+    packet = validate_evidence_packet(packet) or packet
     addendum_paths = [path.resolve() for path in args.evidence_addendum]
     packet = merge_evidence_addenda(packet, addendum_paths)
+    packet = validate_evidence_packet(packet) or packet
     context = extract_pair_context(source)
     if not (project / "src" / "llm_agent.py").is_file():
         parser.error("Project does not contain src/llm_agent.py")
@@ -261,7 +274,7 @@ def main(argv=None) -> int:
         runtime = replace(
             LLMRuntimeConfig.from_mapping(cfg),
             sol_model=ASTRA_MODEL,
-            sol_reasoning_effort="medium",
+            sol_reasoning_effort=api_effort(),
             pipeline="LUNA_SOL",
             fallback_to_sol_only=False,
         )
@@ -302,11 +315,39 @@ def main(argv=None) -> int:
             raise ValueError(f"Astra returned {crm.symbol}, expected CRM")
         crm_json = crm.model_dump(mode="json")
 
+        historical_assessments = source.get("evidence_assessments", [])
+        pair_audit = pair_evidence_audit(
+            packet,
+            [*(historical_assessments if isinstance(historical_assessments, list) else []),
+              *agent.evidence_assessments],
+            "CRM",
+            "MPC",
+            additional_research=[context["mpc_research"]],
+        )
+        write("pair_evidence_audit.json", pair_audit)
+        if pair_audit["requires_targeted_research"]:
+            pending = {
+                **manifest,
+                "status": "NEEDS_RESEARCH",
+                "phase": "CRM_VS_MPC_COMPARISON",
+                "pair_evidence_audit": pair_audit,
+                "research_requests": pair_audit["research_requests"],
+                "crm_rescore": crm_json,
+                "mpc_research": context["mpc_research"],
+                "research_rounds_remaining": pair_audit["rounds_remaining"],
+                "next_step": "只补查 CRM/MPC 成对比较中受影响的变量；不重跑 Luna 或整个 Top 5。",
+                "usage": totals,
+            }
+            write("research_pending.json", pending)
+            write("result.json", pending)
+            print("CRM/MPC pair evidence audit NEEDS_RESEARCH; active selection was not advanced.", flush=True)
+            return 2
+
         comparison = agent._structured_deep_stage(
             PreviousWinnerComparison,
             "crm_vs_mpc_comparison",
             "CRM_VS_MPC",
-            _comparison_prompt(context, crm_json, packet),
+            _comparison_prompt(context, crm_json, packet, pair_audit),
             totals,
             symbol="CRM",
             metadata={"new_first_symbol": "CRM", "previous_first_symbol": "MPC"},
@@ -320,6 +361,26 @@ def main(argv=None) -> int:
             raise ValueError("Comparable alpha gap cannot be null")
         if comparison.alpha_gap_status == "UNKNOWN" and comparison.alpha_gap is not None:
             raise ValueError("Unknown alpha gap must be null")
+        pair_flags = ("pair_comparison_complete", "decision_basis_sufficient", "material_asymmetry_resolved")
+        if any(comparison_json.get(key) is not True for key in pair_flags):
+            pending = {
+                **manifest,
+                "status": "NEEDS_RESEARCH",
+                "phase": "CRM_VS_MPC_COMPARISON",
+                "pair_evidence_audit": {
+                    **pair_audit,
+                    "model_flags": {key: comparison_json.get(key) for key in pair_flags},
+                },
+                "research_requests": pair_audit["research_requests"],
+                "crm_rescore": crm_json,
+                "mpc_research": context["mpc_research"],
+                "comparison_provisional": comparison_json,
+                "research_rounds_remaining": pair_audit["rounds_remaining"],
+                "usage": totals,
+            }
+            write("research_pending.json", pending)
+            write("result.json", pending)
+            return 2
 
         result = {
             **manifest,
@@ -327,6 +388,10 @@ def main(argv=None) -> int:
             "evidence_assessments": agent.evidence_assessments,
             "crm_rescore": crm_json,
             "comparison": comparison_json,
+            "pair_evidence_audit": pair_audit,
+            "pair_comparison_complete": comparison_json["pair_comparison_complete"],
+            "decision_basis_sufficient": comparison_json["decision_basis_sufficient"],
+            "material_asymmetry_resolved": comparison_json["material_asymmetry_resolved"],
             "rebalance_decision": comparison.rebalance_decision,
             **transition_fields("MPC", "CRM", comparison.rebalance_decision),
             "active_selection_research": context["mpc_research"] if comparison.rebalance_decision == "KEEP_PREVIOUS" else {"symbol": "CRM", **crm_json},

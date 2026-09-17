@@ -22,7 +22,7 @@ from selection_rationale import TopFiveRationale
 from research_report import BUNDLED_PYTHON
 from top_five_deep_research import extract_previous_winner, main as run_top5
 from evidence_discipline import install_evidence_discipline
-from research import source_universe
+from research import ASTRA_MODEL, source_universe
 from src import config, llm_agent
 from src.data_provider import MockDataProvider
 from tests.test_sol_deep_research import ranking_payload, deep_payload
@@ -103,12 +103,12 @@ class SelectionReportingTests(unittest.TestCase):
         rationale = top_rationale(top5, candidates[5:])
         payload = audit(initial, candidates, rationale)
         calls = []
-        runtime = llm_agent.LLMRuntimeConfig(base_url="http://invalid.test", api_key="offline-test", sol_model="gpt-6-astra", api_protocol="RESPONSES")
+        runtime = llm_agent.LLMRuntimeConfig(base_url="http://invalid.test", api_key="offline-test", sol_model=ASTRA_MODEL, api_protocol="RESPONSES")
         def create(**request):
             calls.append(request)
             return SimpleNamespace(id="offline", output=[], output_text=json.dumps(payload), usage=None)
         provider = llm_agent.CCSwitchProvider(runtime=runtime, client=SimpleNamespace(responses=SimpleNamespace(create=create)), sleep_fn=lambda _: None)
-        agent = llm_agent.SolResearchCIOAgent("gpt-6-astra", MockDataProvider(), provider=provider)
+        agent = llm_agent.SolResearchCIOAgent(ASTRA_MODEL, MockDataProvider(), provider=provider)
         agent._candidate_symbols = candidates
         install_evidence_discipline(agent, lambda *a: None, capture_selection_path=True)
         totals = dict(input_tokens=0, output_tokens=0, cached_tokens=0, reasoning_tokens=0)
@@ -137,18 +137,19 @@ class SelectionReportingTests(unittest.TestCase):
         comparison = dict(new_first_symbol=final_order[0], previous_first_symbol="OLD", rebalance_decision="KEEP_PREVIOUS",
             alpha_gap=None, alpha_gap_status="UNKNOWN", why_new_beats_previous=["新候选有增长机会"],
             why_keep_previous=["原首选的机会更明确"], evidence_refs=["packet"], confidence=0.3,
-            confidence_reducers=["兑现存在不确定性"], thesis_invalidation_conditions=["原首选催化剂失效"])
+            confidence_reducers=["兑现存在不确定性"], thesis_invalidation_conditions=["原首选催化剂失效"],
+            pair_comparison_complete=True, decision_basis_sufficient=True, material_asymmetry_resolved=True)
         payloads = [*[audit(deep_payload(s), [s], findings) for s in top5],
                     audit(final, top5, final_rationale(final_order)), audit(deep_payload("OLD"), ["OLD"]),
                     audit(comparison, [final_order[0], "OLD"], comparison_rationale())]
         calls = []
-        runtime = llm_agent.LLMRuntimeConfig(base_url="http://invalid.test", api_key="offline-test", sol_model="gpt-6-astra", api_protocol="RESPONSES")
+        runtime = llm_agent.LLMRuntimeConfig(base_url="http://invalid.test", api_key="offline-test", sol_model=ASTRA_MODEL, api_protocol="RESPONSES")
         provider_class = llm_agent.CCSwitchProvider
         def provider_factory(**kwargs):
             def create(**request):
                 calls.append(request)
                 return SimpleNamespace(id=f"offline-{len(calls)}", output=[], output_text=json.dumps(payloads.pop(0)), usage=None)
-            client = SimpleNamespace(responses=SimpleNamespace(create=create), models=SimpleNamespace(list=lambda: {"data": [{"id": "gpt-6-astra"}]}))
+            client = SimpleNamespace(responses=SimpleNamespace(create=create), models=SimpleNamespace(list=lambda: {"data": [{"id": ASTRA_MODEL}]}))
             return provider_class(runtime=kwargs["runtime"], client=client, event_sink=kwargs.get("event_sink"), sleep_fn=lambda _: None)
         with TemporaryDirectory() as directory:
             root = Path(directory)

@@ -124,7 +124,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     print(f"OUTPUT_DIRECTORY={output}", flush=True)
     report = {"source_run": str(args.source), "source_evidence_time": research_starts[0]["timestamp"],
-              "model_requested": runtime.sol_model, "reasoning_requested": "medium", "reused_tools": len(tool_events),
+              "model_requested": runtime.sol_model, "reasoning_requested": runtime.sol_reasoning_effort, "reused_tools": len(tool_events),
               "candidate_count": len(candidates), "sizing_context": "UNKNOWN: source context not persisted",
               "portfolio_source": "original local historical snapshot, not connector account",
               "policy_projection": "NOT_APPLIED: raw committee research", "placeOrder_calls": 0,

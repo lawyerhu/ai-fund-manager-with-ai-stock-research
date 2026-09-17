@@ -86,8 +86,8 @@ class ResearchSkillTests(unittest.TestCase):
         self.provider([{"ok": True}], calls).create_response(model=selected.luna_model, input="test")
         self.assertEqual(calls[0]["reasoning"]["effort"], "max")
 
-    def test_discovery_does_not_fallback_to_sol(self):
-        provider = SimpleNamespace(client=SimpleNamespace(models=SimpleNamespace(list=lambda: {"data": [{"id": "gpt-5.6-sol"}]})))
+    def test_discovery_requires_configured_research_model(self):
+        provider = SimpleNamespace(client=SimpleNamespace(models=SimpleNamespace(list=lambda: {"data": [{"id": "not-the-configured-model"}]})))
         with self.assertRaisesRegex(ValueError, ASTRA_MODEL):
             require_models(provider, self.runtime(), False)
 

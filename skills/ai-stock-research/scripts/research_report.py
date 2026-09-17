@@ -1,16 +1,91 @@
 """Render saved decision-time Chinese rationale without any model or market calls."""
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
-import sys
 
 
-# Codex may provide a richer document runtime. Users can point to it explicitly;
-# a normal project environment remains a portable fallback for local installs.
-BUNDLED_PYTHON = Path(os.environ.get("CODEX_REPORT_PYTHON", sys.executable))
+BUNDLED_PYTHON = Path("C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe")
 ACTIONS = {"KEEP_PREVIOUS": "维持原有效首选", "SWITCH_TO_NEW_FIRST": "切换至本轮第一名"}
+GAP_STATUS_LABELS = {
+    "VERIFIED": "已核实",
+    "NOT_PUBLIC": "未公开",
+    "NOT_YET_OCCURRED": "尚未发生",
+    "RETRIEVAL_FAILED": "本轮检索失败",
+    "PAID_DATA_REQUIRED": "需要付费数据",
+    "DERIVATION_REQUIRED": "需要确定性计算",
+    "INSUFFICIENT_SPECIFICITY": "问题不够具体",
+    "CONFLICTING_EVIDENCE": "证据冲突",
+    "STALE": "数据过旧",
+    "NOT_APPLICABLE": "不适用",
+    "UNAVAILABLE": "旧版不可得",
+    "CONFLICT": "旧版冲突",
+    "NOT_RECORDED": "未记录",
+}
+
+
+def _gap_rows(result):
+    """Collect saved structured gaps; never infer a gap from a score or count."""
+    from evidence_discipline import iter_gap_records
+
+    rows = []
+    seen = set()
+    for stage in result.get("evidence_assessments", []) or []:
+        if not isinstance(stage, dict):
+            continue
+        assessments = stage.get("evidence_assessments", [])
+        # Session handoff results persist one assessment per stage directly;
+        # the skill runner persists a wrapper with an inner assessment list.
+        if not assessments and any(key in stage for key in (
+                "evidence_gaps", "important_evidence_gaps", "unresolved_information_gaps")):
+            assessments = [stage]
+        for assessment in assessments:
+            if not isinstance(assessment, dict):
+                continue
+            for gap in iter_gap_records(assessment):
+                key = (str(gap.get("symbol", "")).upper(), gap.get("field_name"),
+                       gap.get("gap_status"), gap.get("reason"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({**gap, "stage": stage.get("stage")})
+            for derived in assessment.get("resolved_derivations", []) or []:
+                calculation = derived.get("calculation", {}) if isinstance(derived, dict) else {}
+                rows.append({
+                    "symbol": assessment.get("symbol", "NOT_RECORDED"),
+                    "field_name": (derived.get("gap", {}) or {}).get("field_name", "NOT_RECORDED"),
+                    "gap_status": "VERIFIED",
+                    "criticality": "NOT_RECORDED",
+                    "reason": "已根据公开原始输入完成确定性计算",
+                    "source_required": calculation.get("evidence_refs", []),
+                    "last_checked_at": calculation.get("as_of"),
+                    "retrieval_attempts": 0,
+                    "evidence_refs": calculation.get("evidence_refs", []),
+                    "decision_impact": "已从未决计算转为可追溯结果",
+                    "blocking_research": False,
+                    "stage": stage.get("stage"),
+                    "deterministic_calculation": calculation,
+                })
+    return rows
+
+
+def _render_gap_detail(gap):
+    status = str(gap.get("gap_status", "NOT_RECORDED")).upper()
+    status_text = GAP_STATUS_LABELS.get(status, "未记录")
+    attempts = gap.get("retrieval_attempts", 0)
+    if isinstance(attempts, list):
+        attempt_text = str(len(attempts))
+    else:
+        attempt_text = str(attempts)
+    checked = "是" if gap.get("last_checked_at") or gap.get("search_record_refs") or attempt_text not in {"0", "None"} else "未记录"
+    sources = gap.get("source_required") or "未记录"
+    if isinstance(sources, list):
+        sources = "、".join(str(item) for item in sources) or "未记录"
+    return (
+        f"{status}（{status_text}）；是否影响本轮判断：{gap.get('decision_impact', '未记录')}；"
+        f"是否已经补查：{checked}；检索次数：{attempt_text}；最后核验：{gap.get('last_checked_at') or '未记录'}；"
+        f"所需来源：{sources}；停止/原因：{gap.get('stopping_reason') or gap.get('reason') or '未记录'}"
+    )
 
 
 def report_blocks(result):
@@ -70,6 +145,13 @@ def report_blocks(result):
             para(label, values[0])
             for value in values[1:]:
                 blocks.append(("p", value))
+    blocks.append(("h2", "结构化信息缺口及处理状态"))
+    gaps = _gap_rows(result)
+    if gaps:
+        for gap in gaps:
+            blocks.append(("p", f"{gap.get('symbol', '未记录')} · {gap.get('field_name', '未记录')}：{_render_gap_detail(gap)}"))
+    else:
+        blocks.append(("p", "本轮没有保存结构化信息缺口；历史结果缺少新字段时不从分数反推。"))
 
     heading("四 最终第一名的选择依据")
     for row in result["final_ranking"]["ranking"]:
@@ -94,6 +176,14 @@ def report_blocks(result):
 
     heading("五 本轮第一名与原有效首选比较")
     para("比较对象", f"{result['new_first_symbol']} 与 {result['incoming_active_selection']}")
+    pair_audit = result.get("pair_evidence_audit") or {}
+    if pair_audit:
+        para("成对证据审计状态", pair_audit.get("status", "未记录"))
+        para("市场时点是否接近", (pair_audit.get("market_as_of_basis") or {}).get("status", "未记录"))
+        para("关键证据不对称是否已处理", "是" if pair_audit.get("material_asymmetry_resolved") else "否")
+        for item in pair_audit.get("material_asymmetries", []) or []:
+            blocks.append(("p", f"不对称变量：{item.get('symbol')} 的 {item.get('field_name')} 为 {item.get('gap_status')}，"
+                           f"另一腿已有 {item.get('other_evidence_status')}；可能改变方向：{item.get('could_change_direction')}。"))
     points([rationale["incumbent_comparison"]])
     blocks.append(("h2", "维持原首选的理由与取舍"))
     points(rationale["why_keep"])
@@ -167,7 +257,7 @@ def render_reports(result_path):
 
 
 def generate_reports(result_path):
-    """Run report generation in the configured report runtime."""
+    """Run document libraries in the bundled runtime, not the research venv."""
     completed = subprocess.run([str(BUNDLED_PYTHON), "-X", "utf8", str(Path(__file__).resolve()),
                                 "--result", str(result_path), "--render"],
                                capture_output=True, text=True, encoding="utf-8", timeout=60)

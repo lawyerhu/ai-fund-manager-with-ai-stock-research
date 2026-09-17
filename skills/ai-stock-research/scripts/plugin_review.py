@@ -145,7 +145,7 @@ def review_snapshot(provider, runtime, snapshot):
     context = snapshot.context()
     prompt = (
         "Perform a Chinese, research-only multi-position review using the supplied IBKR connector evidence. "
-        "You (GPT-6 Astra) are the decision maker for the recommendation: directly choose the buy/hold/reduce/exit "
+        "You are the decision maker for the recommendation: directly choose the buy/hold/reduce/exit "
         "action and, only when justified by supplied same-account constraints, the target weight; do not defer that "
         "decision to the host program or derive it from a fixed rule. "
         "Review every contract exactly once by conId; contract_description is a label, not a verified Yahoo ticker. "
@@ -186,7 +186,7 @@ def review_snapshot(provider, runtime, snapshot):
         "No orders, order instructions, risk approvals, or private chain-of-thought. Return only schema JSON.\n"
         + json.dumps(context, ensure_ascii=False)
     )
-    response = provider.create_response(model=runtime.sol_model, reasoning={"effort": "medium"}, input=prompt,
+    response = provider.create_response(model=runtime.sol_model, reasoning={"effort": runtime.sol_reasoning_effort}, input=prompt,
         text={"format": {"type": "json_schema", "name": "ibkr_connector_review", "strict": True,
                          "schema": _strict_json_schema(Review.model_json_schema())}})
     result = Review.model_validate_json(_response_text(response))

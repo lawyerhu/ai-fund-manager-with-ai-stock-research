@@ -1,4 +1,10 @@
-"""Ask the same GPT-6 Astra research path to turn observed gaps into a verification plan."""
+"""Legacy API path: ask the same research path to turn observed gaps into a verification plan.
+
+The skill's research decision-maker is the current conversation model, which runs
+through `session_handoff.py` and never calls a model API. This CCSwitch API path
+is retained only as an explicitly requested fallback and no longer pins the
+research model or a `medium` reasoning effort.
+"""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +17,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-ASTRA_MODEL = "gpt-6-astra"
+from research_model import api_effort, api_model
+
+ASTRA_MODEL = api_model()
 
 
 class NoTradingImports(importlib.abc.MetaPathFinder):
@@ -98,7 +106,7 @@ def main(argv=None):
 
     provider = CCSwitchProvider(runtime=runtime, event_sink=event_sink)
     prompt = (
-        "You are GPT-6 Astra planning a bounded information-completion pass for an existing stock research run. "
+        "You are the research decision model for the current run, planning a bounded information-completion pass for an existing stock research run. "
         "Do not invent facts and do not make a trade decision. Independently identify decision-critical unknowns "
         "from the supplied company research and observed gaps; do not limit attention to the prior Top 5 or to a "
         "fixed financial checklist. Return at most 20 prioritized verification items for this batch; disclose any "
@@ -130,7 +138,7 @@ def main(argv=None):
         "plan_id": str(uuid4()),
         "baseline": str(baseline_path),
         "model": ASTRA_MODEL,
-        "reasoning_effort": "medium",
+        "reasoning_effort": api_effort(),
         "candidate_count": baseline.get("candidate_count"),
         "selected_symbol": final.get("selected_symbol") or baseline.get("result", {}).get("decision", {}).get("symbol"),
         "plan": plan.model_dump(mode="json"),

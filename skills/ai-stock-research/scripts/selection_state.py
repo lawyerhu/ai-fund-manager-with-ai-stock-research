@@ -1,4 +1,4 @@
-"""Persist the security retained by GPT-6's decision, never an account holding."""
+"""Persist the security retained by the research model's decision, never an account holding."""
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -26,7 +26,7 @@ class SelectionTransition(BaseModel):
     def check_transition(self):
         expected = self.incoming_active_selection if self.rebalance_decision == "KEEP_PREVIOUS" else self.new_first_symbol
         if self.outgoing_active_selection != expected:
-            raise ValueError("Outgoing active selection contradicts GPT-6's decision")
+            raise ValueError("Outgoing active selection contradicts the research model's decision")
         if self.incoming_active_selection == self.new_first_symbol and self.rebalance_decision != "KEEP_PREVIOUS":
             raise ValueError("Identical selections must KEEP_PREVIOUS")
         return self

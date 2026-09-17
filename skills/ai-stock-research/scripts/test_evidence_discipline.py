@@ -15,7 +15,7 @@ sys.path.insert(0, str(args.project.resolve()))
 
 from evidence_discipline import ResearchPending, install_evidence_discipline
 from equal_depth_candidates import read_event_state
-from research import execute_research, research_runtime
+from research import ASTRA_MODEL, execute_research, research_runtime
 from src.data_provider import MockDataProvider
 from src.llm_agent import CCSwitchProvider, CrossSectionalRanking, DeepDiveResearch, LLMRuntimeConfig, LunaSolPipeline
 from src.models import PortfolioState
@@ -70,7 +70,7 @@ class EvidenceDisciplineTests(unittest.TestCase):
         result = execute_research("candidates", pipeline,
             PortfolioState(equity=1000, peak_equity=1000, cash=1000), None, symbols, {}, {})
         self.assertEqual(len(self.calls), 6)
-        self.assertTrue(all(c["model"] == "gpt-6-astra" and c["reasoning"] == {"effort": "medium"} for c in self.calls))
+        self.assertTrue(all(c["model"] == ASTRA_MODEL and c["reasoning"] == {"effort": "medium"} for c in self.calls))
         rows = result["deep_research"]["ranking"]["ranking"]
         self.assertEqual([(r["symbol"], r["preliminary_alpha_score"], r["confidence"]) for r in rows],
                          [(r["symbol"], r["preliminary_alpha_score"], r["confidence"]) for r in initial["ranking"]])

@@ -1,4 +1,10 @@
-"""Isolated research entry point; production database is always read-only."""
+"""Legacy isolated research entry point; production database is always read-only.
+
+The skill's research decision-maker is the current conversation model, which runs
+through `session_handoff.py` and never calls a model API. This CCSwitch API path
+is retained only as an explicitly requested fallback and no longer pins the
+research model or a `medium` reasoning effort.
+"""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +18,9 @@ import sys
 from uuid import uuid4
 
 from evidence_discipline import ResearchPending, install_evidence_discipline
+from research_model import api_effort, api_model
 
-ASTRA_MODEL = "gpt-6-astra"
+ASTRA_MODEL = api_model()
 
 
 class NoTradingImports(importlib.abc.MetaPathFinder):
@@ -24,7 +31,7 @@ class NoTradingImports(importlib.abc.MetaPathFinder):
 
 
 def research_runtime(runtime):
-    return replace(runtime, sol_model=ASTRA_MODEL, sol_reasoning_effort="medium",
+    return replace(runtime, sol_model=ASTRA_MODEL, sol_reasoning_effort=api_effort(),
                    pipeline="LUNA_SOL", fallback_to_sol_only=False)
 
 

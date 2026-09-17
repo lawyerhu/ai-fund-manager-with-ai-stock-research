@@ -37,7 +37,7 @@ class PluginReviewTests(unittest.TestCase):
             calls.append(kwargs)
             return SimpleNamespace(output_text=json.dumps(response))
         provider = SimpleNamespace(create_response=create)
-        runtime = SimpleNamespace(sol_model="gpt-6-astra")
+        runtime = SimpleNamespace(sol_model="gpt-6-astra", sol_reasoning_effort="medium")
         result = review_snapshot(provider, runtime, validate_snapshot(data))
         self.assertEqual(result.candidate_advice.contract_id, 99)
         self.assertIn('"research_result_path": "isolated/result.json"', calls[0]["input"])
@@ -98,7 +98,7 @@ class PluginReviewTests(unittest.TestCase):
             calls.append(kwargs)
             return SimpleNamespace(output_text=json.dumps(response))
         provider = SimpleNamespace(create_response=create)
-        runtime = SimpleNamespace(sol_model="gpt-6-astra")
+        runtime = SimpleNamespace(sol_model="gpt-6-astra", sol_reasoning_effort="medium")
         result = review_snapshot(provider, runtime, snapshot)
         self.assertEqual(len(result.holdings), 3)
         self.assertEqual(calls[0]["model"], "gpt-6-astra")
@@ -115,7 +115,7 @@ class PluginReviewTests(unittest.TestCase):
             "incremental_reason": "Unsupported", "evidence_refs": ["positions"]}]}
         provider = SimpleNamespace(create_response=lambda **k: SimpleNamespace(output_text=json.dumps(response)))
         with self.assertRaises(ValueError):
-            review_snapshot(provider, SimpleNamespace(sol_model="gpt-6-astra"), validate_snapshot(data))
+            review_snapshot(provider, SimpleNamespace(sol_model="gpt-6-astra", sol_reasoning_effort="medium"), validate_snapshot(data))
 
 
 if __name__ == "__main__":

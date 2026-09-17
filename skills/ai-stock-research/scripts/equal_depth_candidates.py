@@ -1,4 +1,10 @@
-"""Research every saved finalist with the same Sol deep-research evidence set."""
+"""Legacy API path: research every saved finalist with the same Sol deep-research evidence set.
+
+The skill's research decision-maker is the current conversation model, which runs
+through `session_handoff.py` and never calls a model API. This CCSwitch API path
+is retained only as an explicitly requested fallback and no longer pins the
+research model or a `medium` reasoning effort.
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,8 +20,9 @@ from uuid import uuid4
 
 from evidence_discipline import ResearchPending, install_evidence_discipline
 from research import source_universe
+from research_model import api_effort, api_model
 
-ASTRA_MODEL = "gpt-6-astra"
+ASTRA_MODEL = api_model()
 
 
 class NoTradingImports(importlib.abc.MetaPathFinder):
@@ -146,7 +153,7 @@ def main(argv=None):
     runtime = replace(
         LLMRuntimeConfig.from_mapping(cfg),
         sol_model=ASTRA_MODEL,
-        sol_reasoning_effort="medium",
+        sol_reasoning_effort=api_effort(),
         pipeline="LUNA_SOL",
         fallback_to_sol_only=False,
     )

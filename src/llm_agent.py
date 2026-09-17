@@ -1240,6 +1240,10 @@ class DeepRankingItem(BaseModel):
     confidence: float = Field(ge=0, le=1)
     key_strengths: list[str] = Field(min_length=1, max_length=5)
     key_weaknesses: list[str] = Field(min_length=1, max_length=5)
+    # Light decision-time Alpha/Mispricing narrative; not a score or factor.
+    alpha_thesis: str = "NOT_RECORDED"
+    market_expectation: str = "NOT_RECORDED"
+    remaining_alpha_view: str = "NOT_RECORDED"
     research_priority: Literal["HIGH", "MEDIUM", "LOW"]
     dimensions: CrossSectionalDimensions = Field(default_factory=CrossSectionalDimensions)
     unknown_fields: list[str] = Field(default_factory=list, max_length=10)
@@ -1353,6 +1357,11 @@ class DeepDiveResearch(BaseModel):
     return_attribution: ReturnAttribution
     why_now: list[str] = Field(min_length=1, max_length=6)
     market_expectations: list[str] = Field(min_length=1, max_length=6)
+    # The same qualitative view is retained for incumbent/challenger context;
+    # old supplemental records remain readable through the sentinel default.
+    alpha_thesis: str = "NOT_RECORDED"
+    market_expectation: str = "NOT_RECORDED"
+    remaining_alpha_view: str = "NOT_RECORDED"
     pricing_assessment: Literal["UNDERPRICED", "FAIRLY_PRICED", "OVERPRICED", "UNCERTAIN"]
     priced_in_drivers: list[PricedInDriver] = Field(min_length=1, max_length=8)
     alternative_hypotheses: list[AlternativeHypothesis] = Field(min_length=3, max_length=6)

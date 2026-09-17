@@ -482,6 +482,13 @@ def install_evidence_discipline(agent, write, *, stages=None, capture_selection_
         payload = result.model_dump(mode="json")
         assessments = payload.pop("evidence_assessments")
         normalize_assessments(assessments)
+        if event_prefix == "SOL_TOP5_FINAL_RANKING":
+            # Current final rankings must record the model's Alpha/Mispricing
+            # view.  This checks output completeness only; it does not judge
+            # or score the investment conclusion.
+            from selection_rationale import validate_alpha_fields
+            for row in payload.get("ranking", []):
+                validate_alpha_fields(row, require_recorded=True)
         stage_resolved = []
         stage_pending_derivations = []
         try:

@@ -15,6 +15,39 @@ def chinese_text(value):
 ChineseText = Annotated[str, Field(min_length=1), AfterValidator(chinese_text)]
 
 
+ALPHA_DISCIPLINE_FIELDS = ("alpha_thesis", "market_expectation", "remaining_alpha_view")
+ALPHA_FIELD_NOT_RECORDED = "NOT_RECORDED"
+
+
+def alpha_field_value(record, field_name):
+    """Read a saved Alpha/Mispricing field without inventing a historical value."""
+    value = record.get(field_name, ALPHA_FIELD_NOT_RECORDED) if isinstance(record, dict) else ALPHA_FIELD_NOT_RECORDED
+    return value.strip() if isinstance(value, str) and value.strip() else ALPHA_FIELD_NOT_RECORDED
+
+
+def validate_alpha_fields(record, *, require_recorded=False):
+    """Validate the light Alpha/Mispricing fields, never their investment meaning."""
+    if not isinstance(record, dict):
+        raise ValueError("Alpha/Mispricing fields require an object")
+    for field_name in ALPHA_DISCIPLINE_FIELDS:
+        if field_name not in record:
+            if require_recorded:
+                raise ValueError(f"Final ranking requires {field_name}")
+            continue
+        value = record[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Alpha/Mispricing field {field_name} must be a non-empty string")
+        value = value.strip()
+        if require_recorded and value == ALPHA_FIELD_NOT_RECORDED:
+            raise ValueError(f"Final ranking requires recorded {field_name}")
+        if field_name == "market_expectation" and value not in {"UNKNOWN", ALPHA_FIELD_NOT_RECORDED}:
+            if not re.match(r"^(OBSERVED|INFERRED)\s*[:：]\s*\S", value, re.DOTALL):
+                raise ValueError(
+                    "market_expectation must be UNKNOWN or explain an OBSERVED:/INFERRED: basis"
+                )
+    return record
+
+
 class StockReason(BaseModel):
     model_config = ConfigDict(extra="forbid")
     symbol: str
@@ -81,6 +114,9 @@ RATIONALE_INSTRUCTIONS = (
     "这是一段开放式研究叙述，不是固定指标清单；过去涨幅、估值、波动、技术位置、事件和入场延伸风险只能作为证据，"
     "不得自动否决、固定扣分或设定冠军资格。事件本身不是 Alpha，也不要求近期必须有事件。"
     "新旧首选比较时保存维持理由、换股理由、最终动作的核心依据及最大风险；"
+    "最终 Top 5 的每只股票还必须填写 alpha_thesis、market_expectation 和 remaining_alpha_view。"
+    "market_expectation 只能写 UNKNOWN，或以 OBSERVED: / INFERRED: 开头并说明依据；"
+    "INFERRED 不能写成已验证事实，证据不足时不得虚构市场隐含盈利、增长率或估值。"
     "比较 challenger 与 incumbent 时不设置固定分差、置信度或持有期限门槛，模型可基于自身判断误差和研究层交易摩擦自主决定。"
     "历史买入成本、浮盈浮亏和持有天数属于账户/审计信息，不得成为研究层理由；"
     "未采用动作的理由应清楚表达其支持因素与为何本轮未采用，不能与实际动作矛盾。"

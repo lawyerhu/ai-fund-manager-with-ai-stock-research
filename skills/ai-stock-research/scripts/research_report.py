@@ -92,7 +92,7 @@ def report_blocks(result):
     """Each narrative below is copied from its saved decision field, never synthesized."""
     from selection_state import resolve_active_selection
     from selection_rationale import (TopFiveRationale, FinalSelectionRationale, IncumbentRationale,
-                                     SupplementalFindings, chinese_text, check_coverage)
+                                     SupplementalFindings, alpha_field_value, chinese_text, check_coverage)
     resolve_active_selection(result)
     rationale = result["selection_rationale"]
     for schema in (TopFiveRationale, FinalSelectionRationale, IncumbentRationale):
@@ -114,6 +114,20 @@ def report_blocks(result):
     def points(values, empty="本轮未记录此类新增事项"):
         for value in values or [empty]:
             blocks.append(("p", value))
+
+    def saved_symbol_record(value, wanted):
+        wanted = str(wanted).upper()
+        if isinstance(value, dict):
+            if str(value.get("symbol", "")).upper() == wanted:
+                return value
+            for key in (wanted, wanted.upper()):
+                if isinstance(value.get(key), dict):
+                    return value[key]
+        if isinstance(value, list):
+            for row in value:
+                if isinstance(row, dict) and str(row.get("symbol", "")).upper() == wanted:
+                    return row
+        return {}
 
     heading("一 本轮研究范围")
     universe = result.get("universe") or {}
@@ -159,6 +173,12 @@ def report_blocks(result):
     heading("四 最终第一名的选择依据")
     for row in result["final_ranking"]["ranking"]:
         para(f"最终第{row['rank']}名 {row['symbol']}", f"最终分数 {row['preliminary_alpha_score']}")
+    blocks.append(("h2", "Alpha 逻辑（最终 Top 5）"))
+    for row in result["final_ranking"]["ranking"]:
+        blocks.append(("h2", f"第{row.get('rank', '未记录')}名 {row.get('symbol', '未记录')}"))
+        para("Alpha Thesis", alpha_field_value(row, "alpha_thesis"))
+        para("Market Expectation", alpha_field_value(row, "market_expectation"))
+        para("Remaining Alpha View", alpha_field_value(row, "remaining_alpha_view"))
     para("本轮第一名与第二名的模型分差", result["final_alpha_gap"])
     para("本轮第一名", result["new_first_symbol"])
     points([rationale["why_final_first"]])
@@ -189,6 +209,24 @@ def report_blocks(result):
         for item in pair_audit.get("material_asymmetries", []) or []:
             blocks.append(("p", f"不对称变量：{item.get('symbol')} 的 {item.get('field_name')} 为 {item.get('gap_status')}，"
                            f"另一腿已有 {item.get('other_evidence_status')}；可能改变方向：{item.get('could_change_direction')}。"))
+    challenger_row = next(
+        (row for row in result.get("final_ranking", {}).get("ranking", [])
+         if str(row.get("symbol", "")).upper() == str(result["new_first_symbol"]).upper()),
+        {},
+    )
+    incumbent_research = saved_symbol_record(
+        result.get("previous_first_supplemental_research"), result["incoming_active_selection"]
+    )
+    if not incumbent_research:
+        incumbent_research = saved_symbol_record(result.get("incumbent_research"), result["incoming_active_selection"])
+    if not incumbent_research:
+        incumbent_research = saved_symbol_record(result.get("active_selection_research"), result["incoming_active_selection"])
+    blocks.append(("h2", "双方 Remaining Alpha"))
+    para("Incumbent Remaining Alpha", alpha_field_value(incumbent_research, "remaining_alpha_view"))
+    para("Challenger Remaining Alpha", alpha_field_value(challenger_row, "remaining_alpha_view"))
+    blocks.append(("h2", "为什么 KEEP / SWITCH"))
+    para("本轮模型动作", ACTIONS.get(result.get("rebalance_decision"), "NOT_RECORDED"))
+    para("动作理由", rationale.get("core_reason", "NOT_RECORDED"))
     points([rationale["incumbent_comparison"]])
     blocks.append(("h2", "新旧首选的剩余 Alpha 比较"))
     para("成对剩余 Alpha 判断", rationale.get("remaining_alpha_comparison", "NOT_RECORDED"))

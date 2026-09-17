@@ -35,6 +35,22 @@ SELECTION_RATIONALE_TEXT_FIELDS = (
 SELECTION_RATIONALE_LIST_FIELDS = (
     "core_catalysts", "main_risks", "thesis_invalidation_conditions", "why_keep", "why_switch",
 )
+ALPHA_DISCIPLINE_FIELDS = ("alpha_thesis", "market_expectation", "remaining_alpha_view")
+
+
+def _validate_final_alpha_fields(ranking):
+    """Require current final-rank narratives without interpreting their content."""
+    for row in ranking:
+        for field_name in ALPHA_DISCIPLINE_FIELDS:
+            value = row.get(field_name)
+            if not isinstance(value, str) or not value.strip() or value.strip() == MISSING_GAP_STATUS:
+                raise ValueError(f"Final ranking requires recorded {field_name}")
+            value = value.strip()
+            if field_name == "market_expectation" and value != "UNKNOWN":
+                if not re.match(r"^(OBSERVED|INFERRED)\s*[:：]\s*\S", value, re.DOTALL):
+                    raise ValueError(
+                        "market_expectation must be UNKNOWN or explain an OBSERVED:/INFERRED: basis"
+                    )
 
 
 def load(path):
@@ -342,6 +358,7 @@ def validate_decision(manifest, decision, packet):
     require_exact(ranking, initial)
     if [r.get("rank") for r in ranking] != list(range(1, 6)):
         raise ValueError("Final ranks must be ordered 1 through 5")
+    _validate_final_alpha_fields(ranking)
     evidence = packet.get("evidence", [])
     refs = {e.get("id"): e for e in evidence}
     calculations = packet.get("deterministic_calculations", [])

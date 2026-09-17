@@ -33,6 +33,14 @@ description: 使用现有 AI Fund Manager 做美股选股，由Luna筛选、当�
 
 Event is not Alpha。事件本身通常不是 Alpha，只有市场对事件影响判断错误、反应不足或过度、事件揭示未充分计价的信息、加速错价收敛或破坏原有 thesis 时，才可能改变相对收益判断。不得因为下周没有财报、Investor Day、发布会、监管节点或明显短期新闻而机械降低排名；允许没有近期重大事件但存在持续盈利预期差、估值错配或中期经营改善的股票成为第一名。事件只用于验证 thesis、加速收敛或破坏 thesis，不得把流程退化成寻找近期事件最强的股票。
 
+### Alpha / Mispricing Discipline（轻量输出要求）
+
+最终 Top 5 每只股票增加三个开放式研究字段：`alpha_thesis`、`market_expectation`、`remaining_alpha_view`。`alpha_thesis` 应说明市场可能错在哪里、为什么错误尚未完全修正以及什么事实会使论点失效；证据不足时写 `UNKNOWN`。`market_expectation` 只记录当前市场大致预期：有直接可核验依据时以 `OBSERVED:` 开头，只能由价格、估值或公开叙事反推时以 `INFERRED:` 开头并说明依据，无法可靠判断时写 `UNKNOWN`；不得虚构市场隐含 EPS、增长率或估值。`remaining_alpha_view` 定性说明从当前价格开始仍有多少未充分计价的预期差，不映射成分数或自动动作。
+
+最终排名和最终新旧首选比较必须分开审视 **Business Quality、Fundamental Direction、Market Expectations、Remaining Mispricing、Remaining Alpha**。Business quality is not Alpha；Good news is not Alpha；Mispricing is the potential source of Alpha。公司质量、好消息、财报优秀或事件本身都不能直接推出 Alpha，必须进一步说明市场已计价什么、已核验证据支持什么以及当前还剩什么预期差。比较时直接对照 `Incumbent Remaining Alpha` 与 `Challenger Remaining Alpha`：假设今天双方都没有持仓、从当前价格投入同一笔资本，哪一方有更可信、更大的剩余预期差，再由模型结合研究层摩擦选择 KEEP 或 SWITCH。
+
+事件只作为辅助证据，作用限于 **Reveal、Validate、Accelerate、Invalidate**；有事件不得自动加分，没有近期事件也不得自动降权。
+
 ### Entry Overextension 只供模型权衡
 
 `entry_risk`、`entry_overextension_risk`、`price_extension`、`overbought`、`crowding`、`momentum_risk` 等字段不得成为硬过滤器。即使 `investment_quality=HIGH`、`alpha_thesis=STRONG` 且 `entry_overextension_risk=HIGH`，也必须允许当前对话模型继续排名第一；是否放弃只能由模型结合盈利/收入/FCF修订、估值扩张、催化剂计价程度、相对强弱、剩余信息优势、expectation gap、下行不对称、供需、行业周期和竞争地位决定。不得存在“entry risk 高即淘汰”或“price extension 超过固定值即禁止冠军”的程序规则。
@@ -259,7 +267,7 @@ Luna 只做广度筛选；最终首选和是否轮换必须由当前对话模型
 
 ## 每轮正式中文报告与决策理由留存
 
-完整研究的交付包含同一输出目录内的 `result.json`、`events.jsonl`、`evidence_assessments.json`、`active_selection.json` 和 `report.docx`；环境支持时同步生成 `report.pdf`。`top_five_deep_research.py` 在最终比较和状态保存后自动调用 `scripts/research_report.py`。报告的 `unresolved_information_gaps` 必须按股票和 field 展示精确 `gap_status`、是否影响本轮判断、是否已补查及停止继续检索的原因；旧结果缺少这些字段时显示 `NOT_RECORDED`，不能补猜。仅初选、仅看结果或指定股票对复核不冒充完整选股报告。
+完整研究的交付包含同一输出目录内的 `result.json`、`events.jsonl`、`evidence_assessments.json`、`active_selection.json` 和 `report.docx`；环境支持时同步生成 `report.pdf`。`top_five_deep_research.py` 在最终比较和状态保存后自动调用 `scripts/research_report.py`。报告的 `unresolved_information_gaps` 必须按股票和 field 展示精确 `gap_status`、是否影响本轮判断、是否已补查及停止继续检索的原因；最终 Top 5 同时展示三个 Alpha/Mispricing 字段及新旧双方 Remaining Alpha，旧结果缺少这些字段时统一显示 `NOT_RECORDED`，不能补猜。仅初选、仅看结果或指定股票对复核不冒充完整选股报告。
 
 会话交接路径（`scripts/session_handoff.py`）与 legacy 路径有两处差异，排版前必须处理：其一，事件文件名为 `events.json`（legacy 为 `events.jsonl`）；其二，会话校验要求 `final_ranking` 为有序列表（`require_exact` 逐行读取），而 `scripts/research_report.py` 读取的是映射形态 `final_ranking.ranking`。因此会话路径须先在同一输出目录生成报告视图（把 `final_ranking` 包装为 `{"ranking": [...]}`，原始列表另存 `final_ranking_rows` 以保留可追溯性），再对该视图执行 `scripts/research_report.py --result '<报告视图>'`；**已定稿的 `result.json` 不得改写**，它是校验通过的不可变记录。同理，会话决策文件需自带 `selection_rationale`、`supplemental_findings`、`initial_ranking`、`top_five`、`final_alpha_gap` 与 `evidence_assessments`（含 `SOL_TOP5_SUPPLEMENTAL` 与 `SOL_TOP5_FINAL_RANKING` 两个 stage），否则报告排版会缺少理由字段。会话路径的 `selection_rationale` 受 `selection_rationale.py::chinese_text` 约束：正文不得出现小写拉丁字母，技术名词须写中文或大写缩写（如 `cRPO` 写“当期合同剩余履约义务”、`iPhone` 写“苹果手机”、`Pro Max` 写“高配大屏机型”）。
 

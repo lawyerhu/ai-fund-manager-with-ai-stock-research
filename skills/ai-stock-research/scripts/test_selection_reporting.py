@@ -129,7 +129,10 @@ class SelectionReportingTests(unittest.TestCase):
         final_order = top5[1:] + top5[:1]
         final = deepcopy(initial)
         by_symbol = {row["symbol"]: row for row in final["ranking"]}
-        final["ranking"] = [{**by_symbol[s], "rank": i, "preliminary_alpha_score": 96 - i * 4}
+        final["ranking"] = [{**by_symbol[s], "rank": i, "preliminary_alpha_score": 96 - i * 4,
+                              "alpha_thesis": f"{s} 的经营变化可能尚未被价格完全反映",
+                              "market_expectation": f"OBSERVED: {s} 的一致预期与公司公开信息",
+                              "remaining_alpha_view": f"{s} 从当前价格仍有可研究的剩余预期差"}
                             for i, s in enumerate(final_order, 1)]
         source = {"status": "COMPLETE", "ranking": initial,
                   "deep_research": {s: deep_payload(s) for s in candidates}, "candidate_count": 20,
@@ -141,8 +144,12 @@ class SelectionReportingTests(unittest.TestCase):
             why_keep_previous=["原首选的机会更明确"], evidence_refs=["packet"], confidence=0.3,
             confidence_reducers=["兑现存在不确定性"], thesis_invalidation_conditions=["原首选催化剂失效"],
             pair_comparison_complete=True, decision_basis_sufficient=True, material_asymmetry_resolved=True)
+        old_research = deep_payload("OLD")
+        old_research.update({"alpha_thesis": "原首选的经营预期仍有支持",
+                             "market_expectation": "OBSERVED: 原首选的公开一致预期",
+                             "remaining_alpha_view": "原首选从当前价格仍有未充分计价的预期差"})
         payloads = [*[audit(deep_payload(s), [s], findings) for s in top5],
-                    audit(final, top5, final_rationale(final_order)), audit(deep_payload("OLD"), ["OLD"]),
+                    audit(final, top5, final_rationale(final_order)), audit(old_research, ["OLD"]),
                     audit(comparison, [final_order[0], "OLD"], comparison_rationale())]
         calls = []
         runtime = llm_agent.LLMRuntimeConfig(base_url="http://invalid.test", api_key="offline-test", sol_model=ASTRA_MODEL, api_protocol="RESPONSES")
@@ -186,9 +193,19 @@ class SelectionReportingTests(unittest.TestCase):
             self.assertIn("投资论点失效条件", text)
             self.assertIn("剩余 Alpha 与当前价格机会", text)
             self.assertIn("新旧首选的剩余 Alpha 比较", text)
+            self.assertIn("Alpha Thesis", text)
+            self.assertIn(f"{final_order[0]} 的经营变化可能尚未被价格完全反映", text)
+            self.assertIn("Incumbent Remaining Alpha", text)
+            self.assertIn("Challenger Remaining Alpha", text)
+            self.assertIn("为什么 KEEP / SWITCH", text)
             legacy_result = deepcopy(result)
             legacy_result["selection_rationale"].pop("remaining_alpha", None)
             legacy_result["selection_rationale"].pop("remaining_alpha_comparison", None)
+            for row in legacy_result["final_ranking"]["ranking"]:
+                for field in ("alpha_thesis", "market_expectation", "remaining_alpha_view"):
+                    row.pop(field, None)
+            for field in ("alpha_thesis", "market_expectation", "remaining_alpha_view"):
+                legacy_result["previous_first_supplemental_research"].pop(field, None)
             legacy_text = "\n".join(block[1] for block in report_blocks(legacy_result))
             self.assertIn("NOT_RECORDED", legacy_text)
             self.assertEqual(result["reports"]["pdf_status"], "COMPLETE")

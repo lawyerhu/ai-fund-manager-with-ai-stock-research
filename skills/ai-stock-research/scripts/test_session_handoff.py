@@ -52,7 +52,9 @@ def packet():
 
 def row(symbol):
     return {"symbol": symbol, "investment_confidence": 0.6, "evidence_completeness": "partial",
-            "confidence_basis": "offline fixture", "evidence_refs": ["ev1"]}
+            "confidence_basis": "offline fixture", "evidence_refs": ["ev1"],
+            "alpha_thesis": "UNKNOWN", "market_expectation": "UNKNOWN",
+            "remaining_alpha_view": "UNKNOWN"}
 
 
 def decision(action="SWITCH_TO_NEW_FIRST"):

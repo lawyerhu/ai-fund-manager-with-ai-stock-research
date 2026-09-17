@@ -9,7 +9,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from recheck_selection_pair import CandidateReScore, extract_pair_context  # noqa: E402
-from selection_rationale import FinalSelectionRationale, IncumbentRationale  # noqa: E402
+from selection_rationale import (FinalSelectionRationale, IncumbentRationale,
+                                  validate_alpha_fields)  # noqa: E402
 from selection_state import resolve_active_selection, transition_fields  # noqa: E402
 from top_five_deep_research import EVIDENCE_PACKET_INSTRUCTIONS, PreviousWinnerComparison  # noqa: E402
 
@@ -31,6 +32,64 @@ def comparison_payload(challenger, incumbent, action, *, gap=None, gap_status="U
 
 
 class SelectionFreedomTests(unittest.TestCase):
+    def test_alpha_discipline_does_not_turn_good_news_into_an_automatic_rank_boost(self):
+        row = {
+            "alpha_thesis": "UNKNOWN",
+            "market_expectation": "OBSERVED: 高一致预期和已实现的财报结果",
+            "remaining_alpha_view": "原有利好已大部分计价，剩余预期差较弱",
+        }
+        validate_alpha_fields(row, require_recorded=True)
+        prompt = EVIDENCE_PACKET_INSTRUCTIONS
+        self.assertIn("Business Quality is not Alpha", prompt)
+        self.assertIn("Good news is not Alpha", prompt)
+        self.assertIn("Mispricing is the potential source of Alpha", prompt)
+
+    def test_no_near_term_catalyst_does_not_block_revision_supported_selection(self):
+        validate_alpha_fields({
+            "alpha_thesis": "盈利预期持续改善而价格反应有限，市场可能低估修订持续性",
+            "market_expectation": "OBSERVED: EPS 与收入一致预期连续上修",
+            "remaining_alpha_view": "没有近期事件，但仍有未充分计价的经营修订",
+        }, require_recorded=True)
+        self.assertIn("near-term catalyst is not required", EVIDENCE_PACKET_INSTRUCTIONS)
+
+    def test_price_up_fifty_and_eps_up_sixty_remains_model_eligible(self):
+        validate_alpha_fields({
+            "alpha_thesis": "盈利修订快于价格，过去涨幅未必耗尽预期差",
+            "market_expectation": "OBSERVED: EPS 预期上修 60% 且估值倍数基本稳定",
+            "remaining_alpha_view": "基本面改善仍可能支持从当前价格继续相对占优",
+        }, require_recorded=True)
+        self.assertNotIn("price movement has consumed the gap", EVIDENCE_PACKET_INSTRUCTIONS)
+        self.assertIn("Past gains do not imply poor future opportunity", EVIDENCE_PACKET_INSTRUCTIONS)
+
+    def test_multiple_expansion_is_evidence_not_an_automatic_exclusion(self):
+        validate_alpha_fields({
+            "alpha_thesis": "价格上涨主要由倍数扩张推动，后续预期差需要重新验证",
+            "market_expectation": "OBSERVED: EPS 预期变化有限而估值倍数扩张",
+            "remaining_alpha_view": "倍数扩张可能已计价较多，但是否放弃仍由模型判断",
+        }, require_recorded=True)
+        self.assertIn("multiple expansion", EVIDENCE_PACKET_INSTRUCTIONS)
+        self.assertIn("never apply a hard filter", EVIDENCE_PACKET_INSTRUCTIONS)
+
+    def test_unknown_market_expectation_is_explicit_and_not_fabricated(self):
+        row = {
+            "alpha_thesis": "UNKNOWN",
+            "market_expectation": "UNKNOWN",
+            "remaining_alpha_view": "UNKNOWN",
+        }
+        self.assertIs(validate_alpha_fields(row, require_recorded=True), row)
+        with self.assertRaises(ValueError):
+            validate_alpha_fields({**row, "market_expectation": "市场隐含 EPS 为 10%"}, require_recorded=True)
+
+    def test_inferred_market_expectation_is_labeled_as_inference(self):
+        row = {
+            "alpha_thesis": "价格和公开叙事可能隐含较高增长，但直接一致预期不可得",
+            "market_expectation": "INFERRED: 根据当前价格、估值和公开叙事反推，非直接验证事实",
+            "remaining_alpha_view": "模型只能保留定性预期差判断",
+        }
+        self.assertIs(validate_alpha_fields(row, require_recorded=True), row)
+        with self.assertRaises(ValueError):
+            validate_alpha_fields({**row, "market_expectation": "市场预期增长 20%"}, require_recorded=True)
+
     def test_a_b_h_p_price_move_and_risk_are_not_schema_vetoes(self):
         result = CandidateReScore.model_validate({
             "symbol": "NVDA",

@@ -1,4 +1,12 @@
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
 __pycache__/
 .pytest_cache/
 data/*.sqlite3
